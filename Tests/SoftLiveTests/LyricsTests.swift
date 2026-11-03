@@ -37,6 +37,14 @@ struct LRCParserTests {
         #expect(lyrics.lines.map(\.translation) == ["你好", nil])
     }
 
+    @Test func skipsEmptyInterludeLinesWhenAttachingTranslations() throws {
+        let lyrics = try #require(parseLRC(
+            "[00:10.00]\n[00:10.20]hello",
+            translation: "[00:10.00]你好"
+        ))
+        #expect(lyrics.lines.map(\.translation) == [nil, "你好"])
+    }
+
     @Test func rejectsTextWithoutTimedLines() {
         #expect(parseLRC("plain lyrics\nwithout tags") == nil)
         #expect(parseLRC("[00:01.00]") == nil)

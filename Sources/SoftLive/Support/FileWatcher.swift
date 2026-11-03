@@ -2,15 +2,14 @@ import Foundation
 
 /// Calls `onChange` once a burst of writes to a file (or of entry changes in a directory) settles.
 /// Follows the path when the item is replaced.
-@MainActor
 final class FileWatcher {
     private let url: URL
     private let debounce: TimeInterval
-    private let onChange: @MainActor () -> Void
+    private let onChange: () -> Void
     private var source: DispatchSourceFileSystemObject?
     private var pendingNotify: DispatchWorkItem?
 
-    init(url: URL, debounce: TimeInterval = 0.15, onChange: @escaping @MainActor () -> Void) {
+    init(url: URL, debounce: TimeInterval = 0.15, onChange: @escaping () -> Void) {
         self.url = url
         self.debounce = debounce
         self.onChange = onChange

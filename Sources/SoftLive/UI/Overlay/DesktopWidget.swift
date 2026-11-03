@@ -7,14 +7,13 @@ import SwiftUI
 /// WidgetKit cannot do this: widget timelines are refreshed on the system's schedule, far too
 /// rarely for lyrics. A desktop-level panel renders live instead.
 enum DesktopWidget {
-    @MainActor
     static func makePanel(model: AppModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
         OverlayPanel(
             frameName: "SoftLiveDesktopWidget",
             size: DesktopWidgetView.panelSize,
             level: .desktopWidget,
             menu: menu,
-            content: DesktopWidgetView(model: model)
+            content: DesktopWidgetView(model: model, preferences: preferences)
         ) { screen, size in
             NSPoint(x: screen.maxX - size.width - 24, y: screen.maxY - size.height - 24)
         }
@@ -31,13 +30,14 @@ private struct DesktopWidgetView: View {
     static let panelSize = NSSize(width: cardSize.width + 2 * margin, height: cardSize.height + 2 * margin)
 
     let model: AppModel
+    let preferences: Preferences
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             lyrics
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            PlaybackProgress(model: model, barWidth: Self.contentWidth)
+            PlaybackProgress(model: model, isActive: preferences.showsDesktopWidget, barWidth: Self.contentWidth)
         }
         .padding(Self.innerPadding)
         .frame(width: Self.cardSize.width, height: Self.cardSize.height)
@@ -101,12 +101,13 @@ private struct Artwork: View {
 
 private struct PlaybackProgress: View {
     let model: AppModel
+    let isActive: Bool
     let barWidth: CGFloat
 
     var body: some View {
         let duration = model.playback?.track.duration ?? 0
         let remaining = max(0, duration - (model.playback?.position() ?? 0))
-        TimelineView(ProgressSchedule(until: model.isPlaying && duration > 0 ? .now + remaining : .now)) { context in
+        TimelineView(ProgressSchedule(until: isActive && model.isPlaying && duration > 0 ? .now + remaining : .now)) { context in
             let position = min(model.playback?.position(at: context.date) ?? 0, duration)
             let fraction = duration > 0 ? min(max(position / duration, 0), 1) : 0
             VStack(spacing: 4) {

@@ -5,14 +5,14 @@ import OSLog
 /// MediaRemote no longer answers third-party apps, so SoftLive reads what the client leaves behind:
 ///
 /// - Which song started when: the streaming cache (`NetEasePlayCache`), backed by the play history
-///   (`NetEaseHistory`) and the page's own report (`NetEaseLastPlaying`) for songs the cache does not see.
-///   Details come from the history row or the web API.
+///   (`NetEaseHistory`) and the page's own localStorage (`NetEaseLastPlaying`) for songs the cache
+///   does not see. Details come from the history row, `playingInfo` or the web API.
 /// - Where in the song: extrapolated from the start, and corrected by the page's coarse progress reports
 ///   whenever they disagree, which is what makes seeking show up (`ProgressCalibration`).
-/// - Playing or paused: whether the client is sending audio to an output (`AudioOutputMonitor`).
+/// - Playing or paused: `playingState` in `playingInfo` (flushed on pause and resume), backed by a
+///   liveness timeout on `lastPlaying` (which only writes while playing).
 ///
 /// All of it is event driven.
-@MainActor
 final class NetEaseSource: PlayerSource {
     var onChange: (() -> Void)?
     private(set) var state: PlaybackState? {
@@ -24,7 +24,6 @@ final class NetEaseSource: PlayerSource {
     private let history = NetEaseHistory()
     private let playCache = NetEasePlayCache()
     private let lastPlaying = NetEaseLastPlaying()
-    private var audio: AudioOutputMonitor?
     private var runningObserver: RunningAppObserver?
     /// The play `state` describes, or whose song details are being fetched.
     private var play: NetEasePlay?
@@ -37,9 +36,7 @@ final class NetEaseSource: PlayerSource {
         history.onChange = { [weak self] in self?.reload() }
         playCache.onChange = { [weak self] in self?.reload() }
         lastPlaying.onReport = { [weak self] in self?.reported($0) }
-        let audio = AudioOutputMonitor(bundleID: NetEaseClient.bundleID) { [weak self] in self?.audioChanged($0) }
-        self.audio = audio
-        audio.start()
+        lastPlaying.onPlayingChanged = { [weak self] in self?.playingChanged($0, at: $1) }
         runningChanged(observer.isRunning)
     }
 
@@ -71,8 +68,8 @@ final class NetEaseSource: PlayerSource {
         else { return }
         play = latest
         lookup?.cancel()
-        if let entry, entry.track.netEaseSongID == latest.songID {
-            publish(entry.track, startedAt: latest.start)
+        if let track = [entry?.track, lastPlaying.latestTrack].compactMap({ $0 }).first(where: { $0.netEaseSongID == latest.songID }) {
+            publish(track, startedAt: latest.start)
             return
         }
         lookup = Task { [weak self] in
@@ -82,13 +79,15 @@ final class NetEaseSource: PlayerSource {
         }
     }
 
-    /// A start of the same song within its duration is the current play, re-dated by a coarser source;
-    /// its position is left to the calibration.
+    /// A start of the same song before the current play has reached its end is the same play
+    /// (re-dated by a late history row or a report after a pause); its position is left to calibration.
     private func isNewPlay(_ latest: NetEasePlay) -> Bool {
         guard let play, latest.songID == play.songID else { return true }
-        guard latest != play else { return false }
-        guard let state, state.track.netEaseSongID == play.songID else { return true }
-        return state.track.duration > 0 && latest.start.timeIntervalSince(play.start) >= state.track.duration
+        guard let state, state.track.netEaseSongID == play.songID else {
+            return lookup == nil && (latest != play || lastPlaying.isPlaying)
+        }
+        guard latest != play, state.track.duration > 0 else { return false }
+        return state.position(at: latest.start) >= state.track.duration
     }
 
     private func publish(_ track: Track, startedAt start: Date) {
@@ -96,15 +95,27 @@ final class NetEaseSource: PlayerSource {
         let elapsed = now.timeIntervalSince(start)
         Self.log.info("song \(track.id, privacy: .public) \(track.title, privacy: .public) started \(elapsed, format: .fixed(precision: 1))s ago")
         calibration = ProgressCalibration()
-        // A start older than its song is left over from an earlier session: nothing is playing.
-        if track.duration > 0, elapsed > track.duration + 5 {
+
+        let report = lastPlaying.latest?.songID == track.netEaseSongID ? lastPlaying.latest : nil
+        let isPlaying = report != nil ? lastPlaying.isPlaying : elapsed < NetEaseLastPlaying.pauseTimeout
+        // A start older than its song that is no longer playing is left over from an earlier session.
+        if !isPlaying, track.duration > 0, elapsed > track.duration + 5 {
             state = nil
             return
         }
+        if isPlaying { lastPlaying.noteSongStarted() }
+
         var newState = PlaybackState(track: track, isPlaying: true, position: 0, at: start)
-        newState.setPlaying(audio?.isRunning ?? true, at: now)
+        if let report {
+            let extrapolated = newState.position(at: report.date)
+            if let shift = calibration.correction(extrapolated: extrapolated, reported: report.position) {
+                newState.seek(to: extrapolated + shift, at: report.date)
+            }
+        }
+        if !isPlaying {
+            newState.setPlaying(false, at: report?.date ?? now)
+        }
         state = newState
-        if let report = lastPlaying.latest { calibrate(with: report) }
     }
 
     private func reported(_ report: NetEaseLastPlaying.Report) {
@@ -122,10 +133,12 @@ final class NetEaseSource: PlayerSource {
         state = current
     }
 
-    private func audioChanged(_ isRunning: Bool) {
-        Self.log.info("audio output \(isRunning ? "started" : "stopped", privacy: .public)")
-        guard var current = state else { return }
-        current.setPlaying(isRunning)
+    private func playingChanged(_ isPlaying: Bool, at date: Date) {
+        Self.log.info("playback \(isPlaying ? "resumed" : "paused", privacy: .public)")
+        reload()
+        guard var current = state, current.isPlaying != isPlaying else { return }
+        calibration = ProgressCalibration()
+        current.setPlaying(isPlaying, at: date)
         state = current
     }
 }

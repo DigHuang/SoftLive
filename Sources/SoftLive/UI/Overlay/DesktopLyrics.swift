@@ -4,7 +4,6 @@ import SwiftUI
 /// Floating desktop lyrics: above all windows (full-screen apps included). While unlocked they can be
 /// dragged and right-clicked; locked they let every click through.
 enum DesktopLyrics {
-    @MainActor
     static func makePanel(model: AppModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
         OverlayPanel(
             frameName: "SoftLiveDesktopLyrics",

@@ -2,7 +2,6 @@ import Foundation
 
 /// Finds lyrics for a track: exact NetEase ID first, then catalog search (NetEase → LRCLIB).
 /// Results are cached in memory and on disk; "not found" is only remembered for the session.
-@MainActor
 final class LyricsService {
     private var memory: [String: Lyrics?] = [:]
     private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]

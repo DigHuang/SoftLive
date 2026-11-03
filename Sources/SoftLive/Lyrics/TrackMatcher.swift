@@ -51,19 +51,24 @@ enum TrackMatcher {
 
     /// Lowercased, width/diacritic folded, without decorations, spaces or punctuation.
     static func normalize(_ string: String) -> String {
-        stripDecorations(string)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
-            .unicodeScalars
-            .filter { CharacterSet.alphanumerics.contains($0) }
-            .reduce(into: "") { $0.unicodeScalars.append($1) }
+        String(
+            stripDecorations(string)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+                .unicodeScalars
+                .filter(CharacterSet.alphanumerics.contains)
+        )
     }
+
+    private static let bracketedDecoration = /\s*[\(\[（【][^\)\]）】]*[\)\]）】]/
+    private static let dashSuffixDecoration = /\s+-\s+.*$/
+    private static let featuringDecoration = /\s+(?:feat\.?|ft\.)\s+.*$/.ignoresCase()
 
     /// Removes "(Live)", "[Remastered]", "- 2011 Remaster", "feat. X" and the like.
     private static func stripDecorations(_ string: String) -> String {
         string
-            .replacingOccurrences(of: #"\s*[\(\[（【][^\)\]）】]*[\)\]）】]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+-\s+.*$"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+(feat\.?|ft\.)\s+.*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacing(bracketedDecoration, with: "")
+            .replacing(dashSuffixDecoration, with: "")
+            .replacing(featuringDecoration, with: "")
             .trimmingCharacters(in: .whitespaces)
     }
 }

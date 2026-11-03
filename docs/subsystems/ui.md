@@ -21,7 +21,7 @@
 2. **两层裁剪**：高亮层和暗色层（不透明度 0.38）共用这张位图，各由一个 `masksToBounds` 的图层裁剪。
    暗色层的锚点在右边缘，所以只需改它的 `bounds`。
 3. **一条关键帧动画**：`syncAnimation` 根据当前进度和每个词的起止时间，生成一条 `CAKeyframeAnimation(keyPath: "bounds")`，由系统渲染服务逐帧插值。
-   - 只在换行、播放锚点变化或视图重新显示时重建。
+   - 只在换行、播放锚点变化或视图重新显示时重建；面板隐藏时不光栅化也不建动画。
    - 暂停时停在当前分割点（`splitX`）。
    - 词与词之间的空档，分割点停住不动。
 4. **视图常驻**：视图高度固定、换行时不重建；换行时的入场动画也用 Core Animation（`animateEntrance`）。
@@ -32,7 +32,8 @@
   之前的 SwiftUI `TextRenderer` 加 30 fps 方案，双窗口时 CPU 9–14%：每帧都对整行重新排版、重算玻璃效果。
 - **桌面组件里不放持续动画的系统控件**：例如带 `symbolEffect` 的 SF Symbol，实测单这一项就占 15% CPU。
 - **玻璃效果放在静态背景层**：放在内容上会随歌词更新被重算；桌面歌词只在鼠标悬停时显示玻璃背景。
-- **进度条每秒更新一次**：时间文本用整数格式化，不用 `Duration.formatted`。
+- **进度条每秒更新一次**：时间文本用整数格式化，不用 `Duration.formatted`；桌面组件关闭时不启动 `TimelineView` 调度。
+- **固定尺寸宿主视图**：`OverlayHostingView` 设 `sizingOptions = []`，避免 SwiftUI 内容变化时反复测量 `intrinsicContentSize` 并与固定面板尺寸冲突。
 - **不用 WidgetKit**：它的刷新频率由系统控制，做不了实时歌词。
   代价是桌面组件不出现在系统小组件库里。
 - **右键菜单**：`NSHostingView` 会吞掉右键事件，所以由 `OverlayHostingView` 转给菜单。

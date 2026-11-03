@@ -16,6 +16,7 @@ struct KaraokeText: View {
     var hasShadow = false
 
     var body: some View {
+        let height = KaraokeLayerView.lineHeight(for: fontSize)
         KaraokeLayerRepresentable(
             line: line,
             playback: model.playback,
@@ -26,7 +27,7 @@ struct KaraokeText: View {
             centered: centered,
             hasShadow: hasShadow
         )
-        .frame(maxWidth: .infinity, minHeight: ceil(fontSize * 1.35), maxHeight: ceil(fontSize * 1.35))
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
     }
 }
 

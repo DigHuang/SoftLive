@@ -3,7 +3,6 @@ import Foundation
 /// The client's streaming cache. The native player creates `<songID>-_-_<bitrate>-_-_<hash>.info` the
 /// moment a song starts streaming, whether or not the window is in front, so the file's creation date is
 /// the song's start time. Songs replayed from this cache or from downloads create no file.
-@MainActor
 final class NetEasePlayCache {
     /// Called after files were added to or removed from the cache.
     var onChange: (() -> Void)?
