@@ -1,7 +1,6 @@
 import AppKit
 
 @main
-@MainActor
 enum SoftLive {
     static func main() {
         let app = NSApplication.shared
@@ -11,7 +10,6 @@ enum SoftLive {
     }
 }
 
-@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AppModel()
     private let preferences = Preferences()

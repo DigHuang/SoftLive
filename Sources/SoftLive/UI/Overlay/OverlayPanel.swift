@@ -4,7 +4,6 @@ import SwiftUI
 /// A borderless, transparent, non-activating panel that hosts SwiftUI content on every Space:
 /// the base of the desktop lyrics and the desktop widget. It is dragged by its background,
 /// right-clicking it opens `menu`, and its position is remembered under `frameName`.
-@MainActor
 final class OverlayPanel: NSPanel {
     init(
         frameName: String,
@@ -31,6 +30,7 @@ final class OverlayPanel: NSPanel {
         isMovableByWindowBackground = true
 
         let host = OverlayHostingView(rootView: content)
+        host.sizingOptions = []
         host.menu = menu
         contentView = host
 

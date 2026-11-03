@@ -7,7 +7,6 @@ import QuartzCore
 /// Each line is typeset with CoreText and rasterized once; a sung copy and a dimmed copy of that bitmap
 /// are clipped by two layers whose split point follows a single `CAKeyframeAnimation` per line, which the
 /// render server interpolates. The animation is rebuilt only when the line or the playback anchor changes.
-@MainActor
 final class KaraokeLayerView: NSView {
     private struct WordRange: Equatable {
         let startX: CGFloat
@@ -48,8 +47,12 @@ final class KaraokeLayerView: NSView {
     private var lastLineTime: TimeInterval?
     private var wordRanges: [WordRange] = []
 
+    static func lineHeight(for fontSize: CGFloat) -> CGFloat {
+        ceil(fontSize * 1.35)
+    }
+
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: ceil(fontSize * 1.35))
+        NSSize(width: NSView.noIntrinsicMetric, height: Self.lineHeight(for: fontSize))
     }
 
     override init(frame frameRect: NSRect) {
@@ -112,7 +115,7 @@ final class KaraokeLayerView: NSView {
 
     override func viewDidUnhide() {
         super.viewDidUnhide()
-        syncAnimation()
+        refreshIfNeeded(forceSync: true)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -126,7 +129,7 @@ final class KaraokeLayerView: NSView {
     }
 
     private func refreshIfNeeded(forceSync: Bool) {
-        guard bounds.width > 1, bounds.height > 1 else { return }
+        guard !isHiddenOrHasHiddenAncestor, bounds.width > 1, bounds.height > 1 else { return }
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         var resolvedColor = color
         effectiveAppearance.performAsCurrentDrawingAppearance {

@@ -1,7 +1,6 @@
 import AppKit
 
 /// Menu-bar lyrics.
-@MainActor
 final class StatusBarController {
     /// Long lines truncate instead of pushing other items away. If the menu bar has no room left
     /// (common next to the notch) macOS hides the item; the menu stays reachable from the desktop panels.
@@ -17,7 +16,8 @@ final class StatusBarController {
         }
         Task { [weak self] in
             for await text in Observations({ preferences.showsStatusBarLyrics ? model.headline : "" }) {
-                self?.show(text)
+                guard let self else { return }
+                show(text)
             }
         }
     }

@@ -5,7 +5,6 @@ import ScriptingBridge
 ///
 /// Music posts `com.apple.Music.playerInfo` on track changes and play/pause, so those are event driven.
 /// It posts nothing when the user seeks, hence a low-frequency position check while playing.
-@MainActor
 final class AppleMusicSource: PlayerSource {
     var onChange: (() -> Void)?
     private(set) var state: PlaybackState? {

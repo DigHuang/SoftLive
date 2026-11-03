@@ -5,7 +5,14 @@ let package = Package(
     name: "SoftLive",
     platforms: [.macOS(.v26)],
     targets: [
-        .executableTarget(name: "SoftLive"),
-        .testTarget(name: "SoftLiveTests", dependencies: ["SoftLive"]),
+        .executableTarget(
+            name: "SoftLive",
+            swiftSettings: [.defaultIsolation(MainActor.self)]
+        ),
+        .testTarget(
+            name: "SoftLiveTests",
+            dependencies: ["SoftLive"],
+            swiftSettings: [.defaultIsolation(MainActor.self)]
+        ),
     ]
 )

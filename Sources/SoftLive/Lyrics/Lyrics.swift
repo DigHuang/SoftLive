@@ -30,8 +30,9 @@ struct Lyrics: Equatable, Sendable, Codable {
     init?(lines: [LyricLine], translation: String? = nil, tolerance: TimeInterval = 0.75) {
         guard lines.contains(where: { !$0.text.isEmpty }) else { return nil }
         var lines = lines.sorted { $0.time < $1.time }
+        let nonEmptyIndices = lines.indices.filter { !lines[$0].text.isEmpty }
         for entry in LRCParser.timedLines(translation ?? "") where !entry.text.isEmpty {
-            guard let nearest = lines.indices.min(by: { abs(lines[$0].time - entry.time) < abs(lines[$1].time - entry.time) }),
+            guard let nearest = nonEmptyIndices.min(by: { abs(lines[$0].time - entry.time) < abs(lines[$1].time - entry.time) }),
                   abs(lines[nearest].time - entry.time) <= tolerance,
                   lines[nearest].translation == nil
             else { continue }

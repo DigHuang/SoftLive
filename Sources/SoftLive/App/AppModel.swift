@@ -2,7 +2,6 @@ import AppKit
 import Observation
 
 /// Picks the player to follow, loads its lyrics and keeps the current line in sync.
-@MainActor
 @Observable
 final class AppModel {
     enum LyricsStatus { case idle, loading, loaded, notFound }
@@ -17,12 +16,16 @@ final class AppModel {
         didSet { syncCurrentLine() }
     }
 
-    @ObservationIgnored private let sources: [any PlayerSource] = [AppleMusicSource(), NetEaseSource()]
+    @ObservationIgnored private let sources: [any PlayerSource]
     @ObservationIgnored private var activeSource: (any PlayerSource)?
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var lineTimer: Timer?
+
+    init(sources: [any PlayerSource] = [AppleMusicSource(), NetEaseSource()]) {
+        self.sources = sources
+    }
 
     func start() {
         for source in sources {
@@ -34,11 +37,6 @@ final class AppModel {
     // MARK: Display
 
     var isPlaying: Bool { playback?.isPlaying == true }
-
-    /// Position in the lyrics' timeline at `date`, offset included. Drives word-level progress.
-    func lyricsTime(at date: Date) -> TimeInterval {
-        (playback?.position(at: date) ?? 0) + offset
-    }
 
     /// The line `distance` lines away from the current one (before the first line, 1 is the first line).
     func line(_ distance: Int) -> LyricLine? {
@@ -71,11 +69,12 @@ final class AppModel {
     // MARK: Sync
 
     private func sourceDidChange(_ source: any PlayerSource) {
-        // A player that starts playing takes over; otherwise stay with the current one while it has a track.
+        // A player that starts playing takes over; otherwise prefer any playing source, or stay with the current one.
         if source.state?.isPlaying == true {
             activeSource = source
-        } else if activeSource?.state == nil {
-            activeSource = sources.first { $0.state?.isPlaying == true } ?? sources.first { $0.state != nil }
+        } else if activeSource?.state?.isPlaying != true {
+            activeSource = sources.first { $0.state?.isPlaying == true }
+                ?? (activeSource?.state != nil ? activeSource : sources.first { $0.state != nil })
         }
 
         let newPlayback = activeSource?.state

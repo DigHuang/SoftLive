@@ -1,13 +1,19 @@
 import CommonCrypto
 import Foundation
 
-/// What the client's page says it is playing: `lastPlaying` in its localStorage (a LevelDB in the CEF
-/// profile) holds the song and its position in whole seconds. The page updates it about every second and
-/// Chromium commits localStorage to disk about every two seconds, so reports are coarse, but they follow
-/// seeks, which nothing else the client leaves behind does. The value is AES-encrypted with a key built
-/// into the client (documented by CloudLyrics-for-macOS).
-@MainActor
+/// What the client's page says it is doing, read from its localStorage (a LevelDB in the CEF profile):
+///
+/// - `lastPlaying` holds the song ID and its position in whole seconds. The page updates it about every
+///   second while playing and Chromium commits localStorage to disk about every two seconds, so reports
+///   are coarse, but they follow seeks, which nothing else the client leaves behind does.
+/// - `playingInfo` holds `playingState` (`2` while playing, `1` when paused) and `curTrack` (full song
+///   metadata), flushed whenever playback pauses, resumes or changes songs.
+///
+/// Both values are AES-encrypted with a key built into the client (documented by CloudLyrics-for-macOS).
 final class NetEaseLastPlaying {
+    /// While playing, the page flushes `lastPlaying` every ~1.8 s; silence beyond this means playback stopped.
+    static let pauseTimeout: TimeInterval = 4
+
     struct Report: Equatable {
         let songID: Int
         /// Whole seconds; the true position at `date` lies in `position ..< position + ProgressCalibration.window`.
@@ -15,8 +21,23 @@ final class NetEaseLastPlaying {
         let date: Date
     }
 
+    struct Parsed: Equatable {
+        struct Progress: Equatable {
+            let songID: Int
+            let position: TimeInterval
+        }
+
+        var progress: Progress?
+        var isPlaying: Bool?
+        var track: Track?
+        var consumed: Int
+    }
+
     var onReport: ((Report) -> Void)?
+    var onPlayingChanged: ((Bool, Date) -> Void)?
     private(set) var latest: Report?
+    private(set) var latestTrack: Track?
+    private(set) var isPlaying = false
 
     private static let directory = NetEaseClient.dataDirectory?
         .appending(path: "Documents/storage/CEFCache/Local Storage/leveldb", directoryHint: .isDirectory)
@@ -26,6 +47,8 @@ final class NetEaseLastPlaying {
     }
     private var logWatcher: FileWatcher?
     private var log: (url: URL, offset: UInt64)?
+    private var pauseTimer: Timer?
+    private var explicitPlaying: Bool?
 
     func startWatching() {
         directoryWatcher?.start()
@@ -36,8 +59,81 @@ final class NetEaseLastPlaying {
         directoryWatcher?.stop()
         logWatcher?.stop()
         logWatcher = nil
+        pauseTimer?.invalidate()
+        pauseTimer = nil
         log = nil
         latest = nil
+        latestTrack = nil
+        isPlaying = false
+        explicitPlaying = nil
+    }
+
+    /// Marks playback as active when another source (such as a newly created streaming-cache `.info` file)
+    /// sees a song start before the page has flushed its first `localStorage` entry.
+    func noteSongStarted() {
+        explicitPlaying = nil
+        isPlaying = true
+        schedulePauseTimer()
+    }
+
+    func apply(_ parsed: Parsed, at date: Date, now: Date = .now) {
+        if let track = parsed.track { latestTrack = track }
+        let previous = latest
+        let newReport: Report? = if let progress = parsed.progress {
+            Report(songID: progress.songID, position: progress.position, date: date)
+        } else if parsed.isPlaying == true, let songID = parsed.track?.netEaseSongID, songID != previous?.songID {
+            Report(songID: songID, position: 0, date: date)
+        } else {
+            nil
+        }
+        if let newReport {
+            if newReport.songID != previous?.songID { explicitPlaying = nil }
+            latest = newReport
+        }
+        if let explicit = parsed.isPlaying {
+            explicitPlaying = explicit
+        }
+
+        let fresh = now.timeIntervalSince(date) < Self.pauseTimeout
+        let newPlaying: Bool = if let explicit = parsed.isPlaying {
+            explicit && fresh
+        } else if explicitPlaying == false {
+            false
+        } else if let newReport {
+            fresh && (isPlaying || previous == nil || newReport.songID != previous?.songID || newReport.position != previous?.position)
+        } else {
+            isPlaying
+        }
+
+        if newPlaying {
+            schedulePauseTimer()
+        } else {
+            pauseTimer?.invalidate()
+            pauseTimer = nil
+        }
+
+        let playingChanged = newPlaying != isPlaying
+        isPlaying = newPlaying
+
+        if playingChanged, newPlaying {
+            onPlayingChanged?(true, date)
+        }
+        if let newReport {
+            onReport?(newReport)
+        }
+        if playingChanged, !newPlaying {
+            onPlayingChanged?(false, date)
+        }
+    }
+
+    private func schedulePauseTimer() {
+        pauseTimer?.invalidate()
+        pauseTimer = Timer.onMain(after: Self.pauseTimeout) { [weak self] in
+            guard let self, self.isPlaying else { return }
+            self.explicitPlaying = nil
+            self.isPlaying = false
+            self.onPlayingChanged?(false, self.latest?.date ?? .now)
+        }
     }
 
     private func followNewestLog() {
@@ -46,6 +142,7 @@ final class NetEaseLastPlaying {
               let newest = files.filter({ $0.pathExtension == "log" }).max(by: { Self.modified($0) < Self.modified($1) })
         else { return }
         if log?.url != newest {
+            readNewEntries()
             log = (newest, 0)
             logWatcher?.stop()
             logWatcher = FileWatcher(url: newest, debounce: 0) { [weak self] in self?.readNewEntries() }
@@ -58,12 +155,10 @@ final class NetEaseLastPlaying {
         guard let (url, offset) = log, let handle = try? FileHandle(forReadingFrom: url) else { return }
         defer { try? handle.close() }
         guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty else { return }
-        log = (url, offset + UInt64(data.count))
-        guard let (songID, position) = Self.lastValue(in: data) else { return }
-        // The newest value is the last thing written to the file.
-        let report = Report(songID: songID, position: position, date: Self.modified(url))
-        latest = report
-        onReport?(report)
+        let parsed = Self.parse(data, fileOffset: Int(offset))
+        log = (url, offset + UInt64(parsed.consumed))
+        guard parsed.progress != nil || parsed.isPlaying != nil || parsed.track != nil else { return }
+        apply(parsed, at: Self.modified(url))
     }
 
     private static func modified(_ url: URL) -> Date {
@@ -73,40 +168,140 @@ final class NetEaseLastPlaying {
 
     // MARK: Decoding
 
-    nonisolated private static let marker = Array("lastPlaying".utf8)
-    nonisolated private static let key = Array(")(13daqP@ssw0rd~".utf8)
+    private static let lastPlayingMarker = Array("\0\u{01}lastPlaying".utf8)
+    private static let playingInfoMarker = Array("\0\u{01}playingInfo".utf8)
+    private static let key = Array(")(13daqP@ssw0rd~".utf8)
+    private static let blockSize = 32_768
+    private static let blockHeaderSize = 7
 
-    /// The newest readable `lastPlaying` value in a stretch of the LevelDB log. Each write puts the key,
-    /// then the value length (varint), a format byte (1: 8-bit string) and the base64 ciphertext.
-    nonisolated static func lastValue(in data: Data) -> (songID: Int, position: TimeInterval)? {
+    /// The newest readable `lastPlaying` value in a stretch of the LevelDB log.
+    static func lastValue(in data: Data) -> (songID: Int, position: TimeInterval)? {
+        guard let progress = parse(data).progress else { return nil }
+        return (progress.songID, progress.position)
+    }
+
+    /// Reads the newest `lastPlaying` and `playingInfo` records in a stretch of the LevelDB log.
+    /// Each write puts the key, then the value length (varint), a format byte (1: 8-bit string)
+    /// and the base64 ciphertext. Records crossing a 32 KiB LevelDB block boundary carry a 7-byte
+    /// continuation header at the boundary.
+    static func parse(_ data: Data, fileOffset: Int = 0) -> Parsed {
         let bytes = [UInt8](data)
-        let markers = bytes.ranges(of: marker)
-        for range in markers.reversed() {
-            var index = range.upperBound
-            var length = 0, shift = 0
-            while index < bytes.count, shift < 28 {
-                let byte = bytes[index]
-                index += 1
-                length |= Int(byte & 0x7F) << shift
-                shift += 7
-                if byte & 0x80 == 0 { break }
+        var consumed = bytes.count
+        let progress = decodeNewest(LastPlayingState.self, after: lastPlayingMarker, in: bytes, fileOffset: fileOffset, consumed: &consumed)
+        let info = decodeNewest(PlayingInfoState.self, after: playingInfoMarker, in: bytes, fileOffset: fileOffset, consumed: &consumed)
+
+        let track = info?.value.curTrack?.track
+        let infoSongID = track?.netEaseSongID ?? info?.value.resourceTrackId?.value
+        let resolvedProgress: Parsed.Progress? = if let info, let progress, let infoSongID,
+            info.offset > progress.offset, progress.value.resourceId.value != infoSongID, info.value.isPlaying {
+            Parsed.Progress(songID: infoSongID, position: 0)
+        } else if let progress {
+            Parsed.Progress(songID: progress.value.resourceId.value, position: progress.value.current)
+        } else {
+            nil
+        }
+
+        return Parsed(progress: resolvedProgress, isPlaying: info?.value.isPlaying, track: track, consumed: consumed)
+    }
+
+    private static func decodeNewest<T: Decodable>(
+        _ type: T.Type,
+        after marker: [UInt8],
+        in bytes: [UInt8],
+        fileOffset: Int,
+        consumed: inout Int
+    ) -> (value: T, offset: Int)? {
+        for (index, range) in bytes.ranges(of: marker).reversed().enumerated() {
+            switch readRecord(in: bytes, from: range, fileOffset: fileOffset) {
+            case .valid(let plaintext):
+                if let decoded = try? JSONDecoder().decode(T.self, from: plaintext) {
+                    return (decoded, range.lowerBound)
+                }
+            case .truncated where index == 0:
+                // Cut off at EOF: leave the trailing marker so the next read sees the completed record.
+                consumed = min(consumed, range.lowerBound)
+            case .truncated, .invalid:
+                break
             }
-            guard length > 1, index + length <= bytes.count, bytes[index] == 1,
-                  let ciphertext = Data(base64Encoded: Data(bytes[(index + 1)..<(index + length)])),
-                  let plaintext = decrypt(ciphertext),
-                  let state = try? JSONDecoder().decode(State.self, from: plaintext)
-            else { continue }
-            return (state.resourceId.value, state.current)
         }
         return nil
     }
 
-    private struct State: Decodable {
+    private enum RecordStatus {
+        case valid(Data)
+        case truncated
+        case invalid
+    }
+
+    private static func readRecord(in bytes: [UInt8], from markerRange: Range<Int>, fileOffset: Int) -> RecordStatus {
+        var cursor = LogCursor(bytes: bytes, fileOffset: fileOffset, recordStart: markerRange.lowerBound, index: markerRange.upperBound)
+        var length = 0, shift = 0, completeVarint = false
+        while shift < 28 {
+            guard let byte = cursor.nextByte() else { return .truncated }
+            length |= Int(byte & 0x7F) << shift
+            shift += 7
+            if byte & 0x80 == 0 {
+                completeVarint = true
+                break
+            }
+        }
+        guard completeVarint, length > 1 else { return .invalid }
+        guard let format = cursor.nextByte() else { return .truncated }
+        guard format == 1 else { return .invalid }
+        guard let base64 = cursor.read(count: length - 1) else { return .truncated }
+        guard let ciphertext = Data(base64Encoded: base64),
+              let plaintext = decrypt(ciphertext)
+        else { return .invalid }
+        return .valid(plaintext)
+    }
+
+    private struct LogCursor {
+        let bytes: [UInt8]
+        let fileOffset: Int
+        let recordStart: Int
+        var index: Int
+
+        mutating func nextByte() -> UInt8? {
+            if index > recordStart, (fileOffset + index).isMultiple(of: NetEaseLastPlaying.blockSize) {
+                index += NetEaseLastPlaying.blockHeaderSize
+            }
+            guard index < bytes.count else { return nil }
+            defer { index += 1 }
+            return bytes[index]
+        }
+
+        mutating func read(count: Int) -> Data? {
+            var data = Data()
+            data.reserveCapacity(count)
+            while data.count < count {
+                if index > recordStart, (fileOffset + index).isMultiple(of: NetEaseLastPlaying.blockSize) {
+                    index += NetEaseLastPlaying.blockHeaderSize
+                }
+                guard index < bytes.count else { return nil }
+                let room = NetEaseLastPlaying.blockSize - ((fileOffset + index) % NetEaseLastPlaying.blockSize)
+                let step = min(count - data.count, room)
+                guard index + step <= bytes.count else { return nil }
+                data.append(contentsOf: bytes[index..<(index + step)])
+                index += step
+            }
+            return data
+        }
+    }
+
+    private struct LastPlayingState: Decodable {
         let current: TimeInterval
         let resourceId: NetEaseSong.ID
     }
 
-    nonisolated private static func decrypt(_ ciphertext: Data) -> Data? {
+    private struct PlayingInfoState: Decodable {
+        let playingState: Int
+        let resourceTrackId: NetEaseSong.ID?
+        let curTrack: NetEaseSong?
+
+        var isPlaying: Bool { playingState == 2 }
+    }
+
+    private static func decrypt(_ ciphertext: Data) -> Data? {
         guard !ciphertext.isEmpty, ciphertext.count.isMultiple(of: kCCBlockSizeAES128) else { return nil }
         var output = Data(count: ciphertext.count + kCCBlockSizeAES128)
         let capacity = output.count

@@ -2,14 +2,13 @@ import Foundation
 import Observation
 
 /// User toggles, persisted in `UserDefaults`.
-@MainActor
 @Observable
 final class Preferences {
-    var showsStatusBarLyrics: Bool { didSet { save(showsStatusBarLyrics, Key.statusBar) } }
-    var showsDesktopLyrics: Bool { didSet { save(showsDesktopLyrics, Key.desktop) } }
+    var showsStatusBarLyrics: Bool { didSet { defaults.set(showsStatusBarLyrics, forKey: Key.statusBar) } }
+    var showsDesktopLyrics: Bool { didSet { defaults.set(showsDesktopLyrics, forKey: Key.desktop) } }
     /// Locked desktop lyrics ignore the mouse (click-through) and cannot be dragged.
-    var desktopLyricsLocked: Bool { didSet { save(desktopLyricsLocked, Key.locked) } }
-    var showsDesktopWidget: Bool { didSet { save(showsDesktopWidget, Key.widget) } }
+    var desktopLyricsLocked: Bool { didSet { defaults.set(desktopLyricsLocked, forKey: Key.locked) } }
+    var showsDesktopWidget: Bool { didSet { defaults.set(showsDesktopWidget, forKey: Key.widget) } }
 
     private enum Key {
         static let statusBar = "showsStatusBarLyrics"
@@ -27,9 +26,5 @@ final class Preferences {
         showsDesktopLyrics = defaults.bool(forKey: Key.desktop)
         desktopLyricsLocked = defaults.bool(forKey: Key.locked)
         showsDesktopWidget = defaults.bool(forKey: Key.widget)
-    }
-
-    private func save(_ value: Bool, _ key: String) {
-        defaults.set(value, forKey: key)
     }
 }

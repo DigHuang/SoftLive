@@ -13,6 +13,15 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 第一版假设网易云的 `historyTracks` 会在每首歌开始时写入，并用它判断换歌和开始时间。
   用户反馈后台播放时不同步，才用 `playingCount`（每次播放结束时的记录）和缓存文件的创建时间核对：15 次播放里 5 次没有记录，2 次晚写 124 秒和 285 秒。
 - 后来换成缓存文件之前，先核对了它的创建时间与真实开始时间（相差 ≤ 2 秒）。
+- 同样曾假设网易云暂停时 Core Audio 的 `kAudioProcessPropertyIsRunningOutput` 会变为 `0`，未实际测量就上线；用户反馈暂停不同步后核查 `coreaudiod` 日志才发现网易云暂停后会保持音频流开启并输出静音长达 20 小时（`IsRunningOutput` 恒为 `1`），且新歌 `.info` 创建早于音频流启动 150 ms 会把状态卡在暂停。核对 LevelDB `.log` 实测数据后改为读取 `playingInfo.playingState`（`1` = 暂停，`2` = 播放）并辅以 `lastPlaying` 4 秒静默超时。
+- 出现 2 次。
+
+**直接扫描二进制日志文件里的键值时，必须处理底层容器的分块边界。**
+- LevelDB 的 `.log` 文件按 32 KiB（`32768` 字节）分块，跨块记录会在 `offset % 32768 == 0` 处插入 7 字节的块续写头（`crc32 + length + type`）。`lastPlaying` 只有 265 字节很少跨块，但 `playingInfo` 约 13 KB，约 40% 的记录会跨 32 KiB 边界；未跳过 7 字节块头会导致 Base64 解码失败并漏掉状态变化。
+- 出现 1 次。
+
+**引入暂停状态后，所有把“墙钟经过时间（`now - start`）”当作“已播放时长”的判断都要同步修正。**
+- 加入暂停/继续后，`NetEaseSource` 原有的两处逻辑仍假设歌曲从未暂停：`publish` 用 `now - start > duration + 5` 丢弃过期会话，`isNewPlay` 用 `latest.start - play.start >= duration` 判断同曲重播。若一首歌中途暂停了几分钟再恢复（或暂停期间重启 App 再恢复），墙钟时间已超过曲目时长，会导致恢复播放后被当成过期会话丢弃（且因 `play == latest` 卡死在 `state == nil`）或误判为从头重播；暂停状态下拖动进度条写出的单条 `lastPlaying` 也会被 `position != previous.position` 误判为恢复播放。必须区分“正在播放 vs 静止过期”、用计入暂停的 `state.position(at:)` 判断是否播完，并在收到 `playingState = 1` 明确暂停后抑制单条 `lastPlaying` 的假恢复。
 - 出现 1 次。
 
 **觉得功能“没生效”时，先看输入里有没有它需要的数据，再查代码。**
@@ -22,6 +31,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 **时序模型要从实测样本推出来，不要凭直觉。**
 - `ProgressCalibration` 的窗口（2 秒），来自连续 22 条 `lastPlaying` 记录的实测：真实进度比记录值高 0.66–1.68 秒。
 - 第一次写测试时，用“真实进度减延迟再取整”来模拟记录，会产生实际从未出现过的超过 2 秒的差；改成直接用实测的差值。
+- 出现 1 次。
+
+**按分段子串的 UTF-16 长度在整行文本上推进游标时，整行文本不能单独做裁剪或改写。**
+- `YRCParser` 曾对 `words.map(\.text).joined()` 做了 `.trimmingCharacters(in: .whitespaces)`，但 `words` 保留了原始分词；当行首含空格词时，`KaraokeLayerView` 在 `CTLine` 上的 UTF-16 游标整体右偏，导致整行逐字高亮错位。
 - 出现 1 次。
 
 ## 边界与方案
@@ -45,6 +58,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
   但用户在双窗口、逐字歌词播放时仍觉得异常；在同样场景下实测是 9–14%。
   用 `sample` 定位到 `TextRenderer` 每帧都对整行重新排版，改成 Core Animation 后降到 0–0.8%。
 - 出现 2 次。
+
+**隐藏 `NSPanel` 或 `contentView` 不会自动停止 `NSHostingView` 的观察和 `TimelineView` 调度。**
+- 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；需在视图层用 `!isHiddenOrHasHiddenAncestor` 和可见状态显式短路。
+- 出现 1 次。
 
 **前后对比必须在相同条件下测。**
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。

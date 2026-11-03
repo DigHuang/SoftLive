@@ -1,7 +1,44 @@
+import AppKit
 import CommonCrypto
 import Foundation
 import Testing
 @testable import SoftLive
+
+struct AppModelTests {
+    private final class MockSource: PlayerSource {
+        var state: PlaybackState? { didSet { onChange?() } }
+        var onChange: (() -> Void)?
+        func start() { onChange?() }
+        func artwork(for track: Track) async -> NSImage? { nil }
+    }
+
+    @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
+        let first = MockSource()
+        let second = MockSource()
+        let model = AppModel(sources: [first, second])
+        model.start()
+
+        let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
+        let trackB = Track(id: "b", title: "Song B", artist: "Artist", album: "", duration: 180, source: .netEase)
+
+        first.state = PlaybackState(track: trackA, isPlaying: true, position: 0)
+        #expect(model.playback?.track == trackA)
+        model.offset = 1.5
+
+        // Second source starts playing and takes over; offset resets on track change.
+        second.state = PlaybackState(track: trackB, isPlaying: true, position: 0)
+        #expect(model.playback?.track == trackB)
+        #expect(model.offset == 0)
+
+        // Second source pauses while first is still playing: falls back to the playing source.
+        second.state = PlaybackState(track: trackB, isPlaying: false, position: 10)
+        #expect(model.playback?.track == trackA)
+
+        // First source also pauses: stays with the current source while it still has a track.
+        first.state = PlaybackState(track: trackA, isPlaying: false, position: 20)
+        #expect(model.playback?.track == trackA)
+    }
+}
 
 struct PlaybackStateTests {
     private let track = Track(id: "1", title: "t", artist: "a", album: "", duration: 100, source: .netEase)
@@ -115,7 +152,7 @@ struct ProgressCalibrationTests {
 struct NetEaseLastPlayingTests {
     private static let key = Array(")(13daqP@ssw0rd~".utf8)
 
-    private func logEntry(_ json: String) -> Data {
+    private func logEntry(key name: String = "lastPlaying", _ json: String) -> Data {
         let plaintext = Array(json.utf8)
         var ciphertext = [UInt8](repeating: 0, count: plaintext.count + kCCBlockSizeAES128)
         var length = 0
@@ -128,7 +165,7 @@ struct NetEaseLastPlayingTests {
             varint.append(UInt8(remaining & 0x7F) | (remaining > 0x7F ? 0x80 : 0))
             remaining >>= 7
         } while remaining > 0
-        return Data(Array("\u{1}\u{1f}_orpheus://orpheus\u{0}\u{1}lastPlaying".utf8) + varint + value + [0x9A, 0x02])
+        return Data(Array("\u{1}\u{1f}_orpheus://orpheus\u{0}\u{1}\(name)".utf8) + varint + value + [0x9A, 0x02])
     }
 
     @Test func readsTheNewestValueInALogChunk() {
@@ -142,8 +179,80 @@ struct NetEaseLastPlayingTests {
 
     @Test func skipsTruncatedEntries() {
         let complete = logEntry(#"{"current":18,"resourceId":"1"}"#)
-        let truncated = logEntry(#"{"current":20,"resourceId":"1"}"#).prefix(60)
-        #expect(NetEaseLastPlaying.lastValue(in: complete + truncated)?.position == 18)
+        let second = logEntry(#"{"current":20,"resourceId":"1"}"#)
+        let truncated = second.prefix(60)
+        let firstRead = NetEaseLastPlaying.parse(complete + truncated)
+        #expect(firstRead.progress?.position == 18)
+        #expect(firstRead.consumed < complete.count + truncated.count)
+
+        let tail = (complete + second).dropFirst(firstRead.consumed)
+        #expect(NetEaseLastPlaying.parse(Data(tail)).progress?.position == 20)
+    }
+
+    @Test func decodesPlayingStateAndTrackFromPlayingInfo() {
+        let paused = logEntry(
+            key: "playingInfo",
+            #"{"playingState":1,"resourceTrackId":"1853884220","curTrack":{"id":"1853884220","name":"限定涂鸦","duration":184000,"artists":[{"name":"A"}]}}"#
+        )
+        let parsed = NetEaseLastPlaying.parse(paused)
+        #expect(parsed.isPlaying == false)
+        #expect(parsed.track?.netEaseSongID == 1_853_884_220)
+        #expect(parsed.track?.title == "限定涂鸦")
+        #expect(parsed.track?.artist == "A")
+    }
+
+    @Test func reassemblesRecordsCrossing32KiBBlockBoundary() {
+        let record = logEntry(
+            key: "playingInfo",
+            #"{"playingState":2,"resourceTrackId":"2118992","curTrack":{"id":"2118992","name":"Always Getting Over You","duration":252000}}"#
+        )
+        let fileOffset = 32_768 - 40
+        var splitRecord = Data(record.prefix(40))
+        splitRecord.append(contentsOf: [0x08, 0x2A, 0x0C, 0xA5, 0x4A, 0x23, 0x04]) // 7-byte LevelDB block header at 32 KiB
+        splitRecord.append(record.dropFirst(40))
+
+        let parsed = NetEaseLastPlaying.parse(splitRecord, fileOffset: fileOffset)
+        #expect(parsed.isPlaying == true)
+        #expect(parsed.track?.netEaseSongID == 2_118_992)
+    }
+
+    @Test func tracksPauseAndResumeTransitions() {
+        let tracker = NetEaseLastPlaying()
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var events: [(Bool, Date)] = []
+        tracker.onPlayingChanged = { events.append(($0, $1)) }
+
+        // Start playing at 86s.
+        let playChunk = logEntry(#"{"current":86,"resourceId":"1853884220"}"#)
+        tracker.apply(NetEaseLastPlaying.parse(playChunk), at: t0, now: t0.addingTimeInterval(0.5))
+        #expect(tracker.isPlaying == true)
+        #expect(tracker.latest?.position == 86)
+        #expect(events.count == 1 && events.last?.0 == true)
+
+        // Pause via playingInfo: keeps position at 86s and transitions to paused.
+        let pauseChunk = logEntry(key: "playingInfo", #"{"playingState":1,"resourceTrackId":"1853884220"}"#)
+        let tPause = t0.addingTimeInterval(1)
+        tracker.apply(NetEaseLastPlaying.parse(pauseChunk), at: tPause, now: tPause.addingTimeInterval(0.2))
+        #expect(tracker.isPlaying == false)
+        #expect(tracker.latest?.position == 86)
+        #expect(events.count == 2 && events.last?.0 == false)
+
+        // Seeking while paused updates the reported position without falsely resuming playback.
+        let seekWhilePaused = logEntry(#"{"current":40,"resourceId":"1853884220"}"#)
+        let tSeek = t0.addingTimeInterval(5)
+        tracker.apply(NetEaseLastPlaying.parse(seekWhilePaused), at: tSeek, now: tSeek.addingTimeInterval(0.2))
+        #expect(tracker.isPlaying == false)
+        #expect(tracker.latest?.position == 40)
+        #expect(events.count == 2)
+
+        // Resume via playingInfo + lastPlaying.
+        var resumeChunk = logEntry(#"{"current":41,"resourceId":"1853884220"}"#)
+        resumeChunk.append(logEntry(key: "playingInfo", #"{"playingState":2,"resourceTrackId":"1853884220"}"#))
+        let tResume = t0.addingTimeInterval(15)
+        tracker.apply(NetEaseLastPlaying.parse(resumeChunk), at: tResume, now: tResume.addingTimeInterval(0.2))
+        #expect(tracker.isPlaying == true)
+        #expect(tracker.latest?.position == 41)
+        #expect(events.count == 3 && events.last?.0 == true)
     }
 }
 

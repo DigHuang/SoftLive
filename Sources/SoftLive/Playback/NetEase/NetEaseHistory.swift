@@ -6,7 +6,6 @@ import SQLite3
 /// The page script writes it, reliably only while the window is in front: in the background rows arrive
 /// minutes late (stamped with the write time) or never. It is still the only record of songs the streaming
 /// cache does not see (downloads, songs replayed from the cache), and it carries their details.
-@MainActor
 final class NetEaseHistory {
     struct Entry: Equatable {
         let track: Track

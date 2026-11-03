@@ -1,7 +1,6 @@
 import AppKit
 
 /// Tracks whether an app with a given bundle identifier is running.
-@MainActor
 final class RunningAppObserver {
     let bundleID: String
     private var tokens: [NSObjectProtocol] = []
