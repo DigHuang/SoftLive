@@ -8,9 +8,10 @@
 | 规则 | 审查时看什么 |
 | --- | --- |
 | 只做目标需要的改动，不写冗余逻辑，不留死代码。 | 每处行为变化都有理由；同一件事只有一份实现（例如文件监听统一用 `FileWatcher`，歌曲 JSON 统一用 `NetEaseSong`）。用户在第一版就提出过这个要求 |
-| 遵守模块边界。 | `Playback/` 只产出 `PlaybackState` 并由 `PlaybackModel` 编排；`Lyrics/`（含 `Providers/`、`Parsers/`）不碰界面和播放器；`Support/` 放通用基础设施（`HTTPClient`、`FileWatcher`、`Log`）；`UI/` 只读 `PlaybackModel`、`Preferences`。新的播放器放在 `Playback/<Name>/` |
-| 事件驱动，不轮询。 | 进度靠锚点外推，切行用单次定时器，逐字效果用 Core Animation。新增的周期性工作必须说明为什么事件做不到，并用最低够用的频率 |
+| 遵守模块边界。 | `Playback/` 只产出 `PlaybackState` 并由 `PlaybackModel` 编排；`Lyrics/`（含 `Providers/`、`Parsers/`）不碰界面和播放器；`Monitor/` 只采样内核与 IOKit 指标并产出 `SystemMetrics`；`Support/` 放通用基础设施（`HTTPClient`、`FileWatcher`、`Log`）；`UI/` 只读 `PlaybackModel`、`SystemMonitor`、`Preferences`。新的播放器放在 `Playback/<Name>/` |
+| 事件驱动，不轮询。 | 播放进度靠锚点外推，切行用单次定时器，逐字效果用 Core Animation。连续变化的系统指标（`SystemMonitor`）用 2 秒周期采样（弹窗关闭时仅查 1 个主传感器，详情仅在弹窗展开时按需采样），且关闭显示时必须停止定时器 |
 | 隐藏的界面不做后台工作。 | `NSHostingView` 在窗口 `orderOut` 或 `isHidden` 时仍会响应 `@Observable` 更新；隐藏面板里的位图渲染（`!isHiddenOrHasHiddenAncestor`）和 `TimelineView` 调度必须短路。固定尺寸面板的 `NSHostingView` 设 `sizingOptions = []` |
+| 非激活悬浮面板（`.nonactivatingPanel`）的点击交互必须支持首击直达且不触发应用激活。 | 状态栏弹窗或桌面悬浮窗不得在左键点击时调用 `NSApp.activate()`（在刘海屏上切换前台菜单栏会导致状态栏图标跨刘海跳变）；宿主 `NSHostingView` 必须重写 `acceptsFirstMouse(for:) -> true`，且面板内的 SwiftUI 切换/按钮优先使用 `.contentShape(Rectangle()).onTapGesture`（避免 `NSApp.isActive == false` 时 `Button` 忽略首击） |
 | 用 Swift 6.2 原生特性减少样板代码。 | `Package.swift` 已开启 `.defaultIsolation(MainActor.self)`，不在类型和普通方法上重复标 `@MainActor`；需要析构清理时用 `isolated deinit`，不加 `nonisolated(unsafe)`；正则统一用 `static let` 原生 `Regex` 字面量，不用 `NSRegularExpression` 字符串桥接 |
 | 不绕过系统权限。 | 不借用系统二进制的授权（例如用 `/usr/bin/perl` 加载 `mediaremote-adapter` 读 MediaRemote），不碰沙盒、TCC、账号或版权保护。读取一个 App 对**用户自己本地数据**做的混淆（例如网易云的 `lastPlaying`）可以，但只读 |
 | 其他 App 的数据只读，其他 App 的行为以实测为准。 | 不写网易云的数据库、缓存、LevelDB。判断一个数据源何时写入、有多可靠，要有本机实测数据，并写进对应子系统页面 |
@@ -22,6 +23,7 @@
 | 规则 | 审查时看什么 |
 | --- | --- |
 | 跑全部测试。 | `swift test` 全部通过。纯逻辑（解析、判定、校准）都要有单元测试，用例尽量取自真实数据 |
+| 新增或修改交互入口必须在真实运行进程上触发点击并抓图查验。 | 按钮、标签页切换、URL Scheme 唤起、状态栏弹窗等交互改动，不能只跑单元测试；必须启动 App 后在真实窗口上触发点击、核对点击前后窗口坐标与状态，并通过位图渲染核验每一页真实画面 |
 | 改动界面或播放状态后，在真实场景下测 CPU。 | 同时开启桌面歌词和桌面组件，播放带逐字歌词的歌，用 `top` 测；需要定位时用 `sample`。目标：播放时 ≤ 1% |
 | 前后对比要在相同条件下测。 | 相同场景、相同时长、启动后相同时间点。测不了的写明测不了 |
 | 写明验证到了什么、没验证到什么。 | 只验证过离屏渲染、没测到真实播放的，要写明。不能把推测写成结论 |

@@ -1,6 +1,6 @@
 # 给编程 agent 的说明
 
-SoftLive 是一个原生 macOS 歌词应用：在状态栏、桌面悬浮窗和桌面组件里同步显示 Apple Music / 网易云音乐的歌词，支持逐字。
+SoftLive 是一个原生 macOS 状态栏与桌面伴侣应用：在状态栏、桌面悬浮窗和桌面组件里同步显示 Apple Music / 网易云音乐的逐字歌词，并在独立状态栏项里实时监控 CPU、内存、SoC 温度和上下行网速。
 技术栈：Swift 6.2 · SwiftPM · AppKit + SwiftUI · macOS 26+ · 零第三方依赖。
 
 ## 先读什么
