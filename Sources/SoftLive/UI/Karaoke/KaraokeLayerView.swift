@@ -92,6 +92,7 @@ final class KaraokeLayerView: NSView {
         centered: Bool,
         hasShadow: Bool
     ) {
+        let timingChanged = self.playback != playback || self.offset != offset
         self.line = line
         self.playback = playback
         self.offset = offset
@@ -100,7 +101,7 @@ final class KaraokeLayerView: NSView {
         self.color = color
         self.centered = centered
         self.hasShadow = hasShadow
-        refreshIfNeeded(forceSync: true)
+        refreshIfNeeded(forceSync: timingChanged)
     }
 
     override func layout() {

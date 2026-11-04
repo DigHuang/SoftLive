@@ -79,4 +79,93 @@ struct KaraokeLayerViewTests {
         view.isHidden = false
         #expect(view.splitX(at: 10.5, words: words) < view.splitX(at: 12.5, words: words))
     }
+
+    @Test func preservesRunningAnimationWhenReconfiguredWithUnchangedTiming() throws {
+        let words = [
+            LyricWord(start: 10, duration: 1, text: "我的"),
+            LyricWord(start: 12, duration: 1, text: "世界"),
+        ]
+        let line = LyricLine(time: 10, text: "我的世界", words: words)
+        let track = Track(id: "1", title: "Song", artist: "Artist", album: "", duration: 180, source: .netEase)
+        let playback = PlaybackState(track: track, isPlaying: true, position: 10, at: .now)
+
+        let view = KaraokeLayerView(frame: NSRect(x: 0, y: 0, width: 300, height: 32))
+        view.configure(
+            line: line,
+            playback: playback,
+            offset: 0,
+            fontSize: 20,
+            weight: .bold,
+            color: .white,
+            centered: false,
+            hasShadow: false
+        )
+        let clipLayer = try #require(view.layer?.sublayers?.first)
+        let initialAnim = try #require(clipLayer.animation(forKey: "karaoke"))
+
+        // Re-configuring with identical line, playback and offset (e.g. hover/wake state change) must keep the animation.
+        view.configure(
+            line: line,
+            playback: playback,
+            offset: 0,
+            fontSize: 20,
+            weight: .bold,
+            color: .white,
+            centered: false,
+            hasShadow: false
+        )
+        let unchangedAnim = try #require(clipLayer.animation(forKey: "karaoke"))
+        #expect(initialAnim === unchangedAnim)
+
+        // Changing offset must rebuild the animation.
+        view.configure(
+            line: line,
+            playback: playback,
+            offset: 0.5,
+            fontSize: 20,
+            weight: .bold,
+            color: .white,
+            centered: false,
+            hasShadow: false
+        )
+        let updatedAnim = try #require(clipLayer.animation(forKey: "karaoke"))
+        #expect(initialAnim !== updatedAnim)
+    }
+
+    @Test func lyricsInteractionIgnoresHiddenPanelAndDismissesAfterMouseUpOutside() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 100, y: 100, width: 664, height: 136),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let interaction = LyricsInteraction()
+        interaction.attach(to: panel)
+
+        let insidePoint = NSPoint(x: 200, y: 150)
+        let outsidePoint = NSPoint(x: 20, y: 20)
+
+        // While the panel is hidden, pressing Command inside its frame does not wake it.
+        interaction.reevaluate(command: true, buttonsPressed: false, mouseLocation: insidePoint)
+        #expect(interaction.isCommandHeld == false)
+        #expect(interaction.isAwake == false)
+
+        // Once visible, pressing Command inside the card wakes it up.
+        panel.orderFrontRegardless()
+        defer { panel.orderOut(nil) }
+        interaction.reevaluate(command: true, buttonsPressed: false, mouseLocation: insidePoint)
+        #expect(interaction.isCommandHeld == true)
+        #expect(interaction.isAwake == true)
+
+        // Releasing Command while the cursor remains inside keeps the card awake.
+        interaction.reevaluate(command: false, buttonsPressed: false, mouseLocation: insidePoint)
+        #expect(interaction.isCommandHeld == false)
+        #expect(interaction.isAwake == true)
+
+        // Moving outside while a mouse button is held keeps it awake until the button is released.
+        interaction.reevaluate(command: false, buttonsPressed: true, mouseLocation: outsidePoint)
+        #expect(interaction.isAwake == true)
+        interaction.reevaluate(command: false, buttonsPressed: false, mouseLocation: outsidePoint)
+        #expect(interaction.isAwake == false)
+    }
 }

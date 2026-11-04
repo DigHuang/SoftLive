@@ -6,8 +6,8 @@
   查找顺序：内存缓存 → 磁盘缓存 `~/Library/Caches/SoftLive/Lyrics-v2/<来源>-<ID>.json` → 网络。
 - **模型**：[`Lyrics`](../../Sources/SoftLive/Lyrics/Lyrics.swift) 是按时间排序的若干行；一行有文本、可选的翻译和可选的逐字时间（`LyricWord`）。
 - **网络来源**：
-  - [`NetEaseAPI`](../../Sources/SoftLive/Network/NetEaseAPI.swift)：歌词、搜索、歌曲详情。
-  - [`LRCLibAPI`](../../Sources/SoftLive/Network/LRCLibAPI.swift)：LRCLIB 搜索。
+  - [`NetEaseAPI`](../../Sources/SoftLive/Lyrics/Providers/NetEaseAPI.swift)：歌词、搜索、歌曲详情。
+  - [`LRCLibAPI`](../../Sources/SoftLive/Lyrics/Providers/LRCLibAPI.swift)：LRCLIB 搜索。
 
 ## 运行路径
 

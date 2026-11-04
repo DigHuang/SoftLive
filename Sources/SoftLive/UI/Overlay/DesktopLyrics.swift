@@ -7,7 +7,7 @@ import SwiftUI
 /// Liquid Glass card and keeps it awake while the cursor remains inside, so you can release ⌘
 /// and click, double-click for next track, or drag normally.
 enum DesktopLyrics {
-    static func makePanel(model: AppModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
+    static func makePanel(model: PlaybackModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
         let interaction = LyricsInteraction()
         let panel = OverlayPanel(
             frameName: "SoftLiveDesktopLyrics",
@@ -23,6 +23,7 @@ enum DesktopLyrics {
         interaction.attach(to: panel)
         return panel.bind {
             let isVisible = preferences.showsDesktopLyrics && model.playback != nil
+            if !isVisible { interaction.reset() }
             let clicksThrough = preferences.desktopLyricsLocked && !interaction.isCommandHeld && !interaction.isAwake
             return (isVisible, clicksThrough)
         }
@@ -32,56 +33,63 @@ enum DesktopLyrics {
 /// Tracks the Command (⌘) wakeup key and mouse hover so locked lyrics stay 100% click-through
 /// when the cursor passes over them without ⌘, and wake up only when ⌘ is held.
 @Observable
-private final class LyricsInteraction {
+final class LyricsInteraction {
     var isCommandHeld = false
     var isAwake = false
 
-    @ObservationIgnored private var isPointerInside = false
     @ObservationIgnored private weak var panel: NSPanel?
-    @ObservationIgnored private nonisolated(unsafe) var globalMonitor: Any?
-    @ObservationIgnored private nonisolated(unsafe) var localMonitor: Any?
+    @ObservationIgnored private var globalMonitor: Any?
+    @ObservationIgnored private var localMonitor: Any?
 
     func attach(to panel: NSPanel) {
         self.panel = panel
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp]) { [weak self] event in
             let command = event.modifierFlags.contains(.command)
-            Task { @MainActor [weak self] in self?.handleCommandChanged(command) }
+            let buttonsPressed = event.type != .leftMouseUp && NSEvent.pressedMouseButtons != 0
+            Task { @MainActor [weak self] in self?.reevaluate(command: command, buttonsPressed: buttonsPressed) }
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp]) { [weak self] event in
             let command = event.modifierFlags.contains(.command)
-            MainActor.assumeIsolated { self?.handleCommandChanged(command) }
+            let buttonsPressed = event.type != .leftMouseUp && NSEvent.pressedMouseButtons != 0
+            MainActor.assumeIsolated { self?.reevaluate(command: command, buttonsPressed: buttonsPressed) }
             return event
         }
     }
 
-    deinit {
+    isolated deinit {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
     }
 
+    func reset() {
+        if isCommandHeld { isCommandHeld = false }
+        if isAwake { isAwake = false }
+    }
+
     func setHovered(_ hovering: Bool, isLocked: Bool) {
-        isPointerInside = hovering
         let command = NSEvent.modifierFlags.contains(.command)
-        isCommandHeld = command
+        if isCommandHeld != command { isCommandHeld = command }
         if hovering {
-            if !isLocked || command {
+            if (!isLocked || command) && !isAwake {
                 isAwake = true
             }
-        } else if NSEvent.pressedMouseButtons == 0 {
+        } else if NSEvent.pressedMouseButtons == 0, isAwake {
             isAwake = false
         }
     }
 
-    private func handleCommandChanged(_ command: Bool) {
-        isCommandHeld = command
-        guard let panel else { return }
+    func reevaluate(command: Bool, buttonsPressed: Bool, mouseLocation: NSPoint = NSEvent.mouseLocation) {
+        guard let panel, panel.isVisible else {
+            reset()
+            return
+        }
+        if isCommandHeld != command { isCommandHeld = command }
         let cardFrame = panel.frame.insetBy(dx: DesktopLyricsView.margin, dy: DesktopLyricsView.margin)
-        let inside = isPointerInside || cardFrame.contains(NSEvent.mouseLocation)
+        let inside = cardFrame.contains(mouseLocation)
         if command, inside {
-            isPointerInside = true
-            isAwake = true
-        } else if !command, !inside, NSEvent.pressedMouseButtons == 0 {
-            isAwake = false
+            if !isAwake { isAwake = true }
+        } else if !inside, !buttonsPressed {
+            if isAwake { isAwake = false }
         }
     }
 }
@@ -92,7 +100,7 @@ private struct DesktopLyricsView: View {
     static let margin: CGFloat = 12
     static let panelSize = NSSize(width: cardWidth + 2 * margin, height: cardHeight + 2 * margin)
 
-    let model: AppModel
+    let model: PlaybackModel
     let preferences: Preferences
     let interaction: LyricsInteraction
 

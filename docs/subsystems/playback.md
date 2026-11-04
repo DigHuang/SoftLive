@@ -5,8 +5,8 @@
 - **播放状态与控制**：每个播放器来源实现 [`PlayerSource`](../../Sources/SoftLive/Playback/PlayerSource.swift)，发布 [`PlaybackState`](../../Sources/SoftLive/Playback/PlaybackState.swift)（曲目 + 锚点 `(位置, 时刻, 是否播放)`）和最近已知曲目 `recentTrack`（供桌面组件紧凑态展示），并提供 `play()`、`pause()`、`nextTrack()`、`close()`（退出目标播放器进程并清空状态）。
   - 任意时刻的进度 = `位置 + (现在 − 时刻)`（暂停时就是锚点位置）。
   - 来源只在发生事件时更新锚点：换歌、播放/暂停、拖动（`seek(to:at:)`）。
-- **编排**：[`AppModel`](../../Sources/SoftLive/App/AppModel.swift) 负责选择跟随的播放器、加载歌词和封面（切歌时同步清空 `recentArtworks` 以防复用上一首旧封面），并维护当前行 `currentIndex`。
-  界面上显示的内容都从它读取。
+- **编排**：[`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift) 负责选择跟随的播放器、加载歌词和封面（切歌时同步清空 `recentArtworks` 以防复用上一首旧封面，拉取结束后清空 `recentArtworkTasks` 以便失败后重试），并维护当前行 `currentIndex`。
+  界面上显示的播放与歌词内容都从它读取。
 - **手动偏移**：`offset` 是手动校正值（正值表示歌词提前）。换歌时归零。
 
 ## 运行路径
@@ -36,5 +36,5 @@
 
 ## 验证
 
-- `swift test --filter "PlaybackStateTests|AppModelTests"`
+- `swift test --filter "PlaybackStateTests|PlaybackModelTests"`
 - Apple Music 播放中的完整流程尚未端到端测试：用户的资料库是空的。

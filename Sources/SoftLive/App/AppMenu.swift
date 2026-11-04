@@ -6,11 +6,11 @@ final class AppMenu: NSObject, NSMenuDelegate {
     private static let offsetStep: TimeInterval = 0.5
 
     let menu = NSMenu()
-    private let model: AppModel
+    private let model: PlaybackModel
     private let preferences: Preferences
     private var actions: [() -> Void] = []
 
-    init(model: AppModel, preferences: Preferences) {
+    init(model: PlaybackModel, preferences: Preferences) {
         self.model = model
         self.preferences = preferences
         super.init()

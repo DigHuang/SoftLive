@@ -54,6 +54,7 @@ final class NetEaseSource: PlayerSource {
         if isRunning, var current = state {
             Self.log.info("resume requested")
             sendOrpheus(#"{"cmd":"resume"}"#)
+            lastPlaying.noteSongStarted()
             if !current.isPlaying {
                 current.setPlaying(true, at: .now)
                 state = current
@@ -63,6 +64,7 @@ final class NetEaseSource: PlayerSource {
 
         if let track = recentTrack ?? history.latest()?.track ?? lastPlaying.latestTrack {
             let resumePos = lastPlaying.latest?.songID == track.netEaseSongID ? (lastPlaying.latest?.position ?? 0) : 0
+            lastPlaying.noteSongStarted()
             state = PlaybackState(track: track, isPlaying: true, position: resumePos, at: .now)
         }
         Self.log.info("play requested (running: \(isRunning, privacy: .public))")
@@ -78,6 +80,9 @@ final class NetEaseSource: PlayerSource {
                 self.sendOrpheus(resumeCmd)
             }
             self?.launchPlay = nil
+            if let self, self.state?.isPlaying == true, !self.lastPlaying.isPlaying {
+                self.lastPlaying.noteSongStarted()
+            }
         }
     }
 

@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import SoftLive
 
-struct AppModelTests {
+struct PlaybackModelTests {
     private final class MockSource: PlayerSource {
         let kind: PlayerKind
         var state: PlaybackState? { didSet { onChange?() } }
@@ -47,7 +47,7 @@ struct AppModelTests {
     @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
         let first = MockSource(kind: .appleMusic)
         let second = MockSource(kind: .netEase)
-        let model = AppModel(sources: [first, second])
+        let model = PlaybackModel(sources: [first, second])
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
@@ -102,7 +102,7 @@ struct AppModelTests {
         let imageB = NSImage(size: NSSize(width: 20, height: 20))
         source.artworks = ["a": imageA, "b": imageB]
 
-        let model = AppModel(sources: [source])
+        let model = PlaybackModel(sources: [source])
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .netEase)
@@ -119,6 +119,27 @@ struct AppModelTests {
         #expect(model.artwork == nil)
         await Task.yield()
         #expect(model.artwork === imageB)
+    }
+
+    @Test func retriesArtworkOnPlaybackWhenInitialRecentArtworkReturnedNil() async {
+        let source = MockSource(kind: .appleMusic)
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        let track = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
+
+        let model = PlaybackModel(sources: [source])
+        model.start()
+
+        // First attempt while only recentTrack is known returns nil.
+        source.recentTrack = track
+        await Task.yield()
+        #expect(model.recentArtworks[.appleMusic] == nil)
+
+        // Once playback starts and artwork becomes available, loadArtwork must retry instead of being blocked.
+        source.artworks["a"] = image
+        source.state = PlaybackState(track: track, isPlaying: true, position: 0)
+        await Task.yield()
+        #expect(model.artwork === image)
+        #expect(model.recentArtworks[.appleMusic] === image)
     }
 }
 
@@ -323,14 +344,26 @@ struct NetEaseLastPlayingTests {
         #expect(tracker.latest?.position == 40)
         #expect(events.count == 2)
 
-        // Resume via playingInfo + lastPlaying.
-        var resumeChunk = logEntry(#"{"current":41,"resourceId":"1853884220"}"#)
+        // User-initiated resume (noteSongStarted) clears explicit pause so subsequent lastPlaying keeps playing.
+        tracker.noteSongStarted()
+        #expect(tracker.isPlaying == true)
+        let progressAfterResume = logEntry(#"{"current":41,"resourceId":"1853884220"}"#)
+        let tProgress = t0.addingTimeInterval(6)
+        tracker.apply(NetEaseLastPlaying.parse(progressAfterResume), at: tProgress, now: tProgress.addingTimeInterval(0.2))
+        #expect(tracker.isPlaying == true)
+        #expect(tracker.latest?.position == 41)
+
+        // Pause again, then resume via playingInfo + lastPlaying.
+        tracker.apply(NetEaseLastPlaying.parse(pauseChunk), at: t0.addingTimeInterval(10), now: t0.addingTimeInterval(10.2))
+        #expect(tracker.isPlaying == false)
+
+        var resumeChunk = logEntry(#"{"current":42,"resourceId":"1853884220"}"#)
         resumeChunk.append(logEntry(key: "playingInfo", #"{"playingState":2,"resourceTrackId":"1853884220"}"#))
         let tResume = t0.addingTimeInterval(15)
         tracker.apply(NetEaseLastPlaying.parse(resumeChunk), at: tResume, now: tResume.addingTimeInterval(0.2))
         #expect(tracker.isPlaying == true)
-        #expect(tracker.latest?.position == 41)
-        #expect(events.count == 3 && events.last?.0 == true)
+        #expect(tracker.latest?.position == 42)
+        #expect(events.last?.0 == true)
     }
 }
 

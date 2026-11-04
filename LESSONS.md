@@ -24,9 +24,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 加入暂停/继续后，`NetEaseSource` 原有的两处逻辑仍假设歌曲从未暂停：`publish` 用 `now - start > duration + 5` 丢弃过期会话，`isNewPlay` 用 `latest.start - play.start >= duration` 判断同曲重播。若一首歌中途暂停了几分钟再恢复（或暂停期间重启 App 再恢复），墙钟时间已超过曲目时长，会导致恢复播放后被当成过期会话丢弃（且因 `play == latest` 卡死在 `state == nil`）或误判为从头重播；暂停状态下拖动进度条写出的单条 `lastPlaying` 也会被 `position != previous.position` 误判为恢复播放。必须区分“正在播放 vs 静止过期”、用计入暂停的 `state.position(at:)` 判断是否播完，并在收到 `playingState = 1` 明确暂停后抑制单条 `lastPlaying` 的假恢复。
 - 出现 1 次。
 
-**异步派生的缓存值必须在源键更新的同一同步帧清空，不能等异步任务返回再覆盖。**
-- `AppModel.updateRecentTrack` 在切歌时先把 `recentTracks[kind]` 更新为新曲目 B，却未同步清空 `recentArtworks[kind]`（仍留着曲目 A 的旧封面）；紧接着同帧执行的 `loadArtwork(for: B)` 检查 `recentTracks[kind] == B` 命中后直接复用了尚未被覆盖的旧封面 A，导致每次切歌后桌面组件显示的封面都滞后一首。
-- 出现 1 次。
+**异步派生的缓存值必须在源键更新的同一同步帧清空，且异步任务句柄在完成后必须立即归零。**
+- `PlaybackModel.updateRecentTrack` 在切歌时先把 `recentTracks[kind]` 更新为新曲目 B，却未同步清空 `recentArtworks[kind]`（仍留着曲目 A 的旧封面）；紧接着同帧执行的 `loadArtwork(for: B)` 检查 `recentTracks[kind] == B` 命中后直接复用了尚未被覆盖的旧封面 A，导致每次切歌后桌面组件显示的封面都滞后一首。
+- 同一处 `recentArtworkTasks[kind]` 在异步任务结束后未置回 `nil`；当首次封面拉取返回 `nil`（如网络瞬断或播放器 `state` 尚未就绪）时，后续 `loadArtwork` 因 `recentArtworkTasks[kind] != nil` 永久短路，导致播放期间不再重试加载封面。
+- 出现 2 次。
 
 **觉得功能“没生效”时，先看输入里有没有它需要的数据，再查代码。**
 - 用户说看不到逐字效果。查下来，最近播放的几首歌在网易云上本来就没有逐字数据（普通接口和加密接口都没有），代码没问题。
@@ -75,9 +76,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。
 - 出现 1 次。
 
-**`NSWindow.ignoresMouseEvents = true` 不会阻止 SwiftUI `.onHover` 触发。**
-- SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将 `isHovering` 置为 `false`。
-- 出现 1 次。
+**`NSWindow.ignoresMouseEvents = true` 不会阻止 SwiftUI `.onHover` 触发；全局事件监听必须在面板不可见时短路，且只在值变化时写入 `@Observable` 属性。**
+- SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将唤醒态置为 `false`。
+- `NSEvent` 的 `.flagsChanged` 会在按下任意修饰键或方向键时触发，且 `@Observable` 属性每次赋值（哪怕新旧值相等）都会触发 `withMutation` 唤醒 `Observations`。若 `LyricsInteraction` 未在 `!panel.isVisible` 时短路、或未判断新旧值不等再写入，会导致隐藏状态下按任意修饰键仍在后台高频触发观察循环，甚至在鼠标偶经隐藏面板区域按 `⌘` 时提前把 `isAwake` 置为 `true`。
+- 出现 2 次。
 
 **和其他 App 交互，不能顺带把它启动起来。**
 - 退出 Music 后，它会被 SoftLive 重新拉起：Music 退出时仍会发 `playerInfo` 通知，而按 bundle ID 创建的 `SBApplication` 一查询就会启动目标。

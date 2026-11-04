@@ -3,7 +3,7 @@ import Observation
 
 /// Picks the player to follow, loads its lyrics and keeps the current line in sync.
 @Observable
-final class AppModel {
+final class PlaybackModel {
     enum LyricsStatus { case idle, loading, loaded, notFound }
 
     private(set) var playback: PlaybackState?
@@ -135,6 +135,7 @@ final class AppModel {
             guard let source else { return }
             let image = await source.artwork(for: track)
             guard let self, !Task.isCancelled, self.recentTracks[kind] == track else { return }
+            self.recentArtworkTasks[kind] = nil
             self.recentArtworks[kind] = image
             if self.playback?.track == track {
                 self.artwork = image

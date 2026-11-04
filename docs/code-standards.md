@@ -8,10 +8,10 @@
 | 规则 | 审查时看什么 |
 | --- | --- |
 | 只做目标需要的改动，不写冗余逻辑，不留死代码。 | 每处行为变化都有理由；同一件事只有一份实现（例如文件监听统一用 `FileWatcher`，歌曲 JSON 统一用 `NetEaseSong`）。用户在第一版就提出过这个要求 |
-| 遵守模块边界。 | `Playback/` 只产出 `PlaybackState`；`Lyrics/` 不碰界面和播放器；`Network/` 只做请求和解码；`UI/` 只读 `AppModel`、`Preferences`。新的播放器放在 `Playback/<Name>/` |
+| 遵守模块边界。 | `Playback/` 只产出 `PlaybackState` 并由 `PlaybackModel` 编排；`Lyrics/`（含 `Providers/`、`Parsers/`）不碰界面和播放器；`Support/` 放通用基础设施（`HTTPClient`、`FileWatcher`、`Log`）；`UI/` 只读 `PlaybackModel`、`Preferences`。新的播放器放在 `Playback/<Name>/` |
 | 事件驱动，不轮询。 | 进度靠锚点外推，切行用单次定时器，逐字效果用 Core Animation。新增的周期性工作必须说明为什么事件做不到，并用最低够用的频率 |
 | 隐藏的界面不做后台工作。 | `NSHostingView` 在窗口 `orderOut` 或 `isHidden` 时仍会响应 `@Observable` 更新；隐藏面板里的位图渲染（`!isHiddenOrHasHiddenAncestor`）和 `TimelineView` 调度必须短路。固定尺寸面板的 `NSHostingView` 设 `sizingOptions = []` |
-| 用 Swift 6.2 原生特性减少样板代码。 | `Package.swift` 已开启 `.defaultIsolation(MainActor.self)`，不在类型和普通方法上重复标 `@MainActor`；正则统一用 `static let` 原生 `Regex` 字面量，不用 `NSRegularExpression` 字符串桥接 |
+| 用 Swift 6.2 原生特性减少样板代码。 | `Package.swift` 已开启 `.defaultIsolation(MainActor.self)`，不在类型和普通方法上重复标 `@MainActor`；需要析构清理时用 `isolated deinit`，不加 `nonisolated(unsafe)`；正则统一用 `static let` 原生 `Regex` 字面量，不用 `NSRegularExpression` 字符串桥接 |
 | 不绕过系统权限。 | 不借用系统二进制的授权（例如用 `/usr/bin/perl` 加载 `mediaremote-adapter` 读 MediaRemote），不碰沙盒、TCC、账号或版权保护。读取一个 App 对**用户自己本地数据**做的混淆（例如网易云的 `lastPlaying`）可以，但只读 |
 | 其他 App 的数据只读，其他 App 的行为以实测为准。 | 不写网易云的数据库、缓存、LevelDB。判断一个数据源何时写入、有多可靠，要有本机实测数据，并写进对应子系统页面 |
 | 和其他 App 交互不能把它启动起来。 | 绑定到正在运行的进程（例如按 PID 创建 `SBApplication`），不要用会自动启动目标的接口 |
