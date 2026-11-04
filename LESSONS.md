@@ -16,9 +16,11 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 同样曾假设网易云暂停时 Core Audio 的 `kAudioProcessPropertyIsRunningOutput` 会变为 `0`，未实际测量就上线；用户反馈暂停不同步后核查 `coreaudiod` 日志才发现网易云暂停后会保持音频流开启并输出静音长达 20 小时（`IsRunningOutput` 恒为 `1`），且新歌 `.info` 创建早于音频流启动 150 ms 会把状态卡在暂停。核对 LevelDB `.log` 实测数据后改为读取 `playingInfo.playingState`（`1` = 暂停，`2` = 播放）并辅以 `lastPlaying` 4 秒静默超时。
 - 出现 2 次。
 
-**直接扫描二进制日志文件里的键值时，必须处理底层容器的分块边界。**
+**直接扫描二进制日志文件或调用内核 IOKit 结构体接口时，必须核对底层容器的分块边界与 C 结构体字节对齐。**
 - LevelDB 的 `.log` 文件按 32 KiB（`32768` 字节）分块，跨块记录会在 `offset % 32768 == 0` 处插入 7 字节的块续写头（`crc32 + length + type`）。`lastPlaying` 只有 265 字节很少跨块，但 `playingInfo` 约 13 KB，约 40% 的记录会跨 32 KiB 边界；未跳过 7 字节块头会导致 Base64 解码失败并漏掉状态变化。
-- 出现 1 次。
+- `AppleSMC` 内核驱动的 `IOConnectCallStructMethod(selector: 2)` 要求输入/输出 `SMCKeyData_t` 精确为 80 字节。在 C 头文件中，嵌套子结构体 `keyInfo_t`（`UInt32 + UInt32 + UInt8 = 9` 字节）因 4 字节对齐自动补齐到 12 字节；而在 Swift 中直接把字段扁平展开后，紧跟其后的 `result: UInt8` 会填进原本的对齐空隙，导致整个结构体变成 76 字节并报 `kIOReturnBadArgument`。必须在 `keyInfo` 字段后显式补齐 3 字节填充并用 `MemoryLayout<SMCKeyData>.size == 80` 验证。
+- `proc_name(pid, ...)` 只读取内核在 `execve()` 时写入的 `p_comm`（如 `"node"`），而 Node.js / Next.js 等工具修改 `process.title = "next-server (v16.3.6)"` 改写的是用户态栈上的 `argv[0]`。若只查 `proc_name` 并按 PID 永久缓存，会把所有 Next.js / CLI 子进程都显示成无区分度的 `"node"`；必须通过 `sysctl([CTL_KERN, KERN_PROCARGS2, pid])` 读取 `argv` 并结合 `proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, ...)` 的工作目录名（如 `next-server (app)` vs `next-server (admin)`）进行区分。
+- 出现 2 次。
 
 **引入暂停状态后，所有把“墙钟经过时间（`now - start`）”当作“已播放时长”的判断都要同步修正。**
 - 加入暂停/继续后，`NetEaseSource` 原有的两处逻辑仍假设歌曲从未暂停：`publish` 用 `now - start > duration + 5` 丢弃过期会话，`isNewPlay` 用 `latest.start - play.start >= duration` 判断同曲重播。若一首歌中途暂停了几分钟再恢复（或暂停期间重启 App 再恢复），墙钟时间已超过曲目时长，会导致恢复播放后被当成过期会话丢弃（且因 `play == latest` 卡死在 `state == nil`）或误判为从头重播；暂停状态下拖动进度条写出的单条 `lastPlaying` 也会被 `position != previous.position` 误判为恢复播放。必须区分“正在播放 vs 静止过期”、用计入暂停的 `state.position(at:)` 判断是否播完，并在收到 `playingState = 1` 明确暂停后抑制单条 `lastPlaying` 的假恢复。
@@ -68,10 +70,6 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；需在视图层用 `!isHiddenOrHasHiddenAncestor` 和可见状态显式短路。
 - 出现 1 次。
 
-**新增交互入口（按钮、菜单、URL Scheme 唤起）必须在真实运行态下点击并核对日志，不能只跑单元测试。**
-- 桌面组件首次加上「开始播放」按钮和 `orpheus://` 唤起时只跑了单元测试就交付；实际存在三处运行态问题：① `OverlayHostingView.hitTest(_:)` 的参数在父视图未翻转坐标系中，直接按 `isFlipped` 裁剪导致顶部按钮区域返回 `nil`、点击穿透到桌面（后改为锚定 `frame.maxY` 直接调整 `NSPanel` 高度）；② `.borderless` 的 `NSPanel` 默认 `canBecomeKey == false`，未重写时点击控件只打印 `makeKeyWindow` 警告；③ 网易云冷启动时首个 `orpheus://` 事件早于 CEF 页面就绪而丢失，需在未进入播放态时延迟补发。
-- 出现 1 次。
-
 **前后对比必须在相同条件下测。**
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。
 - 出现 1 次。
@@ -80,6 +78,11 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将唤醒态置为 `false`。
 - `NSEvent` 的 `.flagsChanged` 会在按下任意修饰键或方向键时触发，且 `@Observable` 属性每次赋值（哪怕新旧值相等）都会触发 `withMutation` 唤醒 `Observations`。若 `LyricsInteraction` 未在 `!panel.isVisible` 时短路、或未判断新旧值不等再写入，会导致隐藏状态下按任意修饰键仍在后台高频触发观察循环，甚至在鼠标偶经隐藏面板区域按 `⌘` 时提前把 `isAwake` 置为 `true`。
 - 出现 2 次。
+
+**周期性状态栏采样与重绘必须避免全量跨进程 IPC、重复的 `NSStatusItem` 场景属性设置与无效重绘。**
+- 第一版 `ThermalSampler.sample()` 每秒对全部 14 个 `PMU tdie*` 传感器调用 `IOHIDServiceClientCopyEvent`（底层走 `io_hideventsystem_copy_event_for_service` → `hidd` Mach IPC），同时 `MonitorStatusBar` 每秒无条件赋值 `item.isVisible = true` 和 `item.length`（在 macOS 26 的 `NSSceneStatusItem` 上触发 `FrontBoardServices` 场景同步）并重建字体字典与 `NSImage`，导致单状态栏监控就占用 1–4% CPU。
+- 通过 `sample` 定位后，改为只保留 1 个主传感器句柄且每 3 秒查 1 次、缓存 `static let` 字体与段落样式、仅在 `item.isVisible` 变化时写入，并按格式化后的 `DisplayKey` 去重重绘，采样与渲染在 5 秒（5000 次采样）中仅占 7 个样本（约 0.14% CPU）。
+- 出现 1 次。
 
 **和其他 App 交互，不能顺带把它启动起来。**
 - 退出 Music 后，它会被 SoftLive 重新拉起：Music 退出时仍会发 `playerInfo` 通知，而按 bundle ID 创建的 `SBApplication` 一查询就会启动目标。
