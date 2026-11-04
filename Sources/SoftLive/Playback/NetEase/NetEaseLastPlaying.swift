@@ -174,12 +174,6 @@ final class NetEaseLastPlaying {
     private static let blockSize = 32_768
     private static let blockHeaderSize = 7
 
-    /// The newest readable `lastPlaying` value in a stretch of the LevelDB log.
-    static func lastValue(in data: Data) -> (songID: Int, position: TimeInterval)? {
-        guard let progress = parse(data).progress else { return nil }
-        return (progress.songID, progress.position)
-    }
-
     /// Reads the newest `lastPlaying` and `playingInfo` records in a stretch of the LevelDB log.
     /// Each write puts the key, then the value length (varint), a format byte (1: 8-bit string)
     /// and the base64 ciphertext. Records crossing a 32 KiB LevelDB block boundary carry a 7-byte
@@ -328,9 +322,10 @@ final class NetEaseLastPlaying {
 /// when a start time was off) is it corrected, to the middle of the bounds. Reports that disagree with
 /// everything seen before (a seek) start over.
 struct ProgressCalibration {
-    /// A report of `n` seconds means the position is in `n ..< n + window`: the page stores whole seconds
-    /// and the disk copy lags up to about a second behind it (measured: 0.66–1.68 s above `n`).
-    static let window: TimeInterval = 2
+    /// A report of `n` seconds means the position is in `n ..< n + window`: the page writes `floor(position)`
+    /// every second and Chromium flushes localStorage within ~0.1–0.2 s (measured: 0.10–1.12 s above `n`;
+    /// earlier `0.66–1.68 s` numbers had included the 0.5–0.8 s buffering lead of `.info` file creation).
+    static let window: TimeInterval = 1.2
 
     /// Possible values of (true position − extrapolated position).
     private var error: ClosedRange<TimeInterval>?

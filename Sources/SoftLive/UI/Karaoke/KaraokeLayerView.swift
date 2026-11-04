@@ -189,9 +189,7 @@ final class KaraokeLayerView: NSView {
             return
         }
 
-        let baseFont = NSFont.systemFont(ofSize: key.fontSize, weight: key.weight)
-        let font = baseFont.fontDescriptor.withDesign(.rounded)
-            .flatMap { NSFont(descriptor: $0, size: key.fontSize) } ?? baseFont
+        let font = NSFont.systemFont(ofSize: key.fontSize, weight: key.weight)
 
         let attrString = NSAttributedString(string: key.text, attributes: [
             .font: font,
@@ -230,30 +228,61 @@ final class KaraokeLayerView: NSView {
 
         let pixelW = max(1, Int(ceil(width * key.backingScale)))
         let pixelH = max(1, Int(ceil(height * key.backingScale)))
-        guard let ctx = CGContext(
-            data: nil,
-            width: pixelW,
-            height: pixelH,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else { return }
 
-        ctx.scaleBy(x: key.backingScale, y: key.backingScale)
-        if key.hasShadow {
-            ctx.setShadow(
-                offset: CGSize(width: 0, height: -1),
-                blur: 3,
-                color: NSColor.black.withAlphaComponent(0.65).cgColor
-            )
+        func rasterize(fillColor: NSColor, tightShadowAlpha: CGFloat, ambientShadowAlpha: CGFloat) -> CGImage? {
+            guard let ctx = CGContext(
+                data: nil,
+                width: pixelW,
+                height: pixelH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            ) else { return nil }
+
+            ctx.scaleBy(x: key.backingScale, y: key.backingScale)
+            ctx.translateBy(x: originX, y: baselineY)
+            ctx.scaleBy(x: textScale, y: textScale)
+
+            let drawLine = CTLineCreateWithAttributedString(NSAttributedString(string: key.text, attributes: [
+                .font: font,
+                .foregroundColor: fillColor
+            ]))
+
+            if key.hasShadow {
+                // Soft ambient shadow pass for depth.
+                ctx.saveGState()
+                ctx.setShadow(
+                    offset: CGSize(width: 0, height: -2),
+                    blur: 8,
+                    color: NSColor.black.withAlphaComponent(ambientShadowAlpha).cgColor
+                )
+                ctx.textPosition = .zero
+                CTLineDraw(drawLine, ctx)
+                ctx.restoreGState()
+
+                // Crisp contact shadow pass for edge legibility on light backgrounds.
+                ctx.saveGState()
+                ctx.setShadow(
+                    offset: CGSize(width: 0, height: -0.8),
+                    blur: 2,
+                    color: NSColor.black.withAlphaComponent(tightShadowAlpha).cgColor
+                )
+                ctx.textPosition = .zero
+                CTLineDraw(drawLine, ctx)
+                ctx.restoreGState()
+            } else {
+                ctx.textPosition = .zero
+                CTLineDraw(drawLine, ctx)
+            }
+            return ctx.makeImage()
         }
-        ctx.translateBy(x: originX, y: baselineY)
-        ctx.scaleBy(x: textScale, y: textScale)
-        ctx.textPosition = .zero
-        CTLineDraw(ctLine, ctx)
 
-        let image = ctx.makeImage()
+        let sungImage = rasterize(fillColor: key.color, tightShadowAlpha: 0.62, ambientShadowAlpha: 0.45)
+        let unsungImage = key.hasShadow
+            ? rasterize(fillColor: NSColor(white: 1.0, alpha: 0.56), tightShadowAlpha: 0.52, ambientShadowAlpha: 0.36)
+            : sungImage
+
         let fullRect = CGRect(origin: .zero, size: key.size)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -261,8 +290,9 @@ final class KaraokeLayerView: NSView {
         unsungClipLayer.position = CGPoint(x: width, y: 0)
         sungImageLayer.frame = fullRect
         unsungImageLayer.frame = fullRect
-        sungImageLayer.contents = image
-        unsungImageLayer.contents = image
+        sungImageLayer.contents = sungImage
+        unsungImageLayer.contents = unsungImage
+        unsungImageLayer.opacity = key.hasShadow ? 1.0 : Self.unsungOpacity
         sungImageLayer.contentsScale = key.backingScale
         unsungImageLayer.contentsScale = key.backingScale
         CATransaction.commit()

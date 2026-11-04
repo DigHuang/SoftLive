@@ -80,6 +80,12 @@ struct NetEaseSong: Decodable {
     struct Album: Decodable {
         let name: String
         let picUrl: String?
+        let cover: String?
+        let blurPicUrl: String?
+
+        var imageURL: String? {
+            [picUrl, cover, blurPicUrl].compactMap { $0 }.first { !$0.isEmpty }
+        }
     }
 
     let id: ID
@@ -99,7 +105,7 @@ struct NetEaseSong: Decodable {
             album: album?.name ?? "",
             duration: duration / 1000,
             source: .netEase,
-            artworkURL: album?.picUrl.flatMap(Self.artworkURL)
+            artworkURL: album?.imageURL.flatMap(Self.artworkURL)
         )
     }
 
