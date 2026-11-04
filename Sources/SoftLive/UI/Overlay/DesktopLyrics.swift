@@ -7,7 +7,7 @@ import SwiftUI
 /// Liquid Glass card and keeps it awake while the cursor remains inside, so you can release ⌘
 /// and click, double-click for next track, or drag normally.
 enum DesktopLyrics {
-    static func makePanel(model: AppModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
+    static func makePanel(model: PlaybackModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
         let interaction = LyricsInteraction()
         let panel = OverlayPanel(
             frameName: "SoftLiveDesktopLyrics",
@@ -100,7 +100,7 @@ private struct DesktopLyricsView: View {
     static let margin: CGFloat = 12
     static let panelSize = NSSize(width: cardWidth + 2 * margin, height: cardHeight + 2 * margin)
 
-    let model: AppModel
+    let model: PlaybackModel
     let preferences: Preferences
     let interaction: LyricsInteraction
 

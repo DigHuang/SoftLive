@@ -8,7 +8,7 @@ import SwiftUI
 /// changes never rebuild or re-measure the SwiftUI tree.
 struct KaraokeText: View {
     let line: LyricLine
-    let model: AppModel
+    let model: PlaybackModel
     var fontSize: CGFloat = 19
     var weight: NSFont.Weight = .bold
     var color: NSColor = .labelColor

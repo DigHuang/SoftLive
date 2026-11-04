@@ -3,7 +3,7 @@ import Observation
 
 /// Picks the player to follow, loads its lyrics and keeps the current line in sync.
 @Observable
-final class AppModel {
+final class PlaybackModel {
     enum LyricsStatus { case idle, loading, loaded, notFound }
 
     private(set) var playback: PlaybackState?

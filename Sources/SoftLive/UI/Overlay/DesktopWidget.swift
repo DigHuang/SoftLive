@@ -7,7 +7,7 @@ import SwiftUI
 /// WidgetKit cannot do this: widget timelines are refreshed on the system's schedule, far too
 /// rarely for lyrics. A desktop-level panel renders live instead.
 enum DesktopWidget {
-    static func makePanel(model: AppModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
+    static func makePanel(model: PlaybackModel, preferences: Preferences, menu: NSMenu) -> OverlayPanel {
         OverlayPanel(
             frameName: "SoftLiveDesktopWidget",
             size: DesktopWidgetView.panelSize,
@@ -36,7 +36,7 @@ private struct DesktopWidgetView: View {
     static let compactPanelHeight = compactHeight + 2 * margin
     static let panelSize = NSSize(width: cardWidth + 2 * margin, height: expandedPanelHeight)
 
-    let model: AppModel
+    let model: PlaybackModel
     let preferences: Preferences
 
     var body: some View {
@@ -225,7 +225,7 @@ private struct Artwork: View {
 private struct PlaybackProgress: View {
     private static let barWidth: CGFloat = 68
 
-    let model: AppModel
+    let model: PlaybackModel
     let isActive: Bool
 
     var body: some View {

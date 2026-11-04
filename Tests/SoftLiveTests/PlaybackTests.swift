@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import SoftLive
 
-struct AppModelTests {
+struct PlaybackModelTests {
     private final class MockSource: PlayerSource {
         let kind: PlayerKind
         var state: PlaybackState? { didSet { onChange?() } }
@@ -47,7 +47,7 @@ struct AppModelTests {
     @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
         let first = MockSource(kind: .appleMusic)
         let second = MockSource(kind: .netEase)
-        let model = AppModel(sources: [first, second])
+        let model = PlaybackModel(sources: [first, second])
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
@@ -102,7 +102,7 @@ struct AppModelTests {
         let imageB = NSImage(size: NSSize(width: 20, height: 20))
         source.artworks = ["a": imageA, "b": imageB]
 
-        let model = AppModel(sources: [source])
+        let model = PlaybackModel(sources: [source])
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .netEase)
@@ -126,7 +126,7 @@ struct AppModelTests {
         let image = NSImage(size: NSSize(width: 16, height: 16))
         let track = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
 
-        let model = AppModel(sources: [source])
+        let model = PlaybackModel(sources: [source])
         model.start()
 
         // First attempt while only recentTrack is known returns nil.

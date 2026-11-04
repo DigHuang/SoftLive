@@ -25,7 +25,7 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 出现 1 次。
 
 **异步派生的缓存值必须在源键更新的同一同步帧清空，且异步任务句柄在完成后必须立即归零。**
-- `AppModel.updateRecentTrack` 在切歌时先把 `recentTracks[kind]` 更新为新曲目 B，却未同步清空 `recentArtworks[kind]`（仍留着曲目 A 的旧封面）；紧接着同帧执行的 `loadArtwork(for: B)` 检查 `recentTracks[kind] == B` 命中后直接复用了尚未被覆盖的旧封面 A，导致每次切歌后桌面组件显示的封面都滞后一首。
+- `PlaybackModel.updateRecentTrack` 在切歌时先把 `recentTracks[kind]` 更新为新曲目 B，却未同步清空 `recentArtworks[kind]`（仍留着曲目 A 的旧封面）；紧接着同帧执行的 `loadArtwork(for: B)` 检查 `recentTracks[kind] == B` 命中后直接复用了尚未被覆盖的旧封面 A，导致每次切歌后桌面组件显示的封面都滞后一首。
 - 同一处 `recentArtworkTasks[kind]` 在异步任务结束后未置回 `nil`；当首次封面拉取返回 `nil`（如网络瞬断或播放器 `state` 尚未就绪）时，后续 `loadArtwork` 因 `recentArtworkTasks[kind] != nil` 永久短路，导致播放期间不再重试加载封面。
 - 出现 2 次。
 

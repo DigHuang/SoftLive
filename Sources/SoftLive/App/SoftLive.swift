@@ -11,17 +11,17 @@ enum SoftLive {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = AppModel()
+    private let model = PlaybackModel()
     private let preferences = Preferences()
     private lazy var appMenu = AppMenu(model: model, preferences: preferences)
-    private var statusBar: StatusBarController?
+    private var lyricsStatusBar: LyricsStatusBar?
     private var desktopLyrics: OverlayPanel?
     private var desktopWidget: OverlayPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement only applies to the bundled app; keep `swift run` out of the Dock too.
         NSApp.setActivationPolicy(.accessory)
-        statusBar = StatusBarController(model: model, preferences: preferences, menu: appMenu.menu)
+        lyricsStatusBar = LyricsStatusBar(model: model, preferences: preferences, menu: appMenu.menu)
         desktopLyrics = DesktopLyrics.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
         desktopWidget = DesktopWidget.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
         model.start()

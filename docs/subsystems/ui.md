@@ -2,9 +2,9 @@
 
 ## 职责与事实来源
 
-- **只读数据与快捷控制**：界面只读取 [`AppModel`](../../Sources/SoftLive/App/AppModel.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，并通过 `AppModel.play(_:)`、`togglePlayPause()`、`nextTrack()`、`closePlayback()` 控制播放与收起，不直接接触播放器内部实现或网络。
-- **状态栏**：[`StatusBarController`](../../Sources/SoftLive/UI/StatusBarController.swift) 显示 `AppModel.headline`，最大宽度 260 pt，长句尾部截断。
-- **菜单**：[`AppMenu`](../../Sources/SoftLive/UI/AppMenu.swift) 是唯一的菜单，状态栏、右键桌面歌词或桌面组件、再次打开 App 都弹出它。
+- **只读数据与快捷控制**：界面只读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，并通过 `PlaybackModel.play(_:)`、`togglePlayPause()`、`nextTrack()`、`closePlayback()` 控制播放与收起，不直接接触播放器内部实现或网络。
+- **状态栏歌词**：[`LyricsStatusBar`](../../Sources/SoftLive/UI/StatusBar/LyricsStatusBar.swift) 显示 `PlaybackModel.headline`，最大宽度 260 pt，长句尾部截断。
+- **菜单**：[`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是唯一的菜单，状态栏、右键桌面歌词或桌面组件、再次打开 App 都弹出它。
 - **悬浮面板基类**：[`OverlayPanel`](../../Sources/SoftLive/UI/Overlay/OverlayPanel.swift) 是桌面歌词和桌面组件共用的面板。
   它负责透明背景、在所有桌面空间显示、原生拖动（`window.performDrag`，保留系统屏幕边缘阻尼感）、首击直达控件（`acceptsFirstMouse` + `canBecomeKey`）、右键菜单、记住位置（`frameName`），并通过 `Observations` 同步显示、鼠标穿透和紧凑态可点击高度（`activeTopHeight`，用 `convert(point, from: superview)` 转换坐标）。
 - **桌面歌词**：[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift)，窗口层级 `.floating`，全屏 App 上也显示：
