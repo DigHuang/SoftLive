@@ -30,6 +30,9 @@ final class AppMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        menu.addItem(item("显示状态栏监控", isOn: preferences.showsSystemMonitor) { [preferences] in
+            preferences.showsSystemMonitor.toggle()
+        })
         menu.addItem(item("状态栏歌词", isOn: preferences.showsStatusBarLyrics) { [preferences] in
             preferences.showsStatusBarLyrics.toggle()
         })

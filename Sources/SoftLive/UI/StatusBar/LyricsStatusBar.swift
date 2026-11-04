@@ -16,8 +16,18 @@ final class LyricsStatusBar {
             button.cell?.lineBreakMode = .byTruncatingTail
         }
         Task { [weak self] in
-            for await (shows, headline) in Observations({ (preferences.showsStatusBarLyrics, model.headline) }) {
-                self?.show(shows ? headline : "")
+            for await (showsLyrics, showsMonitor, headline) in Observations({
+                (preferences.showsStatusBarLyrics, preferences.showsSystemMonitor, model.headline)
+            }) {
+                guard let self else { return }
+                // Hide the lyrics status item completely when the user turned it off and the
+                // system monitor item is already visible in the menu bar.
+                let shouldBeVisible = showsLyrics || !showsMonitor
+                if self.item.isVisible != shouldBeVisible {
+                    self.item.isVisible = shouldBeVisible
+                }
+                guard shouldBeVisible else { continue }
+                self.show(showsLyrics ? headline : "")
             }
         }
     }
