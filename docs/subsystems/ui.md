@@ -9,7 +9,7 @@
   它负责透明背景、在所有桌面空间显示、原生拖动（`window.performDrag`，保留系统屏幕边缘阻尼感）、首击直达控件（`acceptsFirstMouse` + `canBecomeKey`）、右键菜单、记住位置（`frameName`），并通过 `Observations` 同步显示、鼠标穿透和紧凑态可点击高度（`activeTopHeight`，用 `convert(point, from: superview)` 转换坐标）。
 - **桌面歌词**：[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift)，窗口层级 `.floating`，全屏 App 上也显示：
   - **平时状态**：完全透明背景，采用统一的标准 SF Pro 字体与固定高度双行居中排版（上行 26 pt `.semibold` 逐字高亮，下行 15 pt `.medium` 翻译或下一句，空行保留高度防跳动），配合文字自身的双层自然投影（紧贴边缘阴影 + 柔和环境阴影），不使用生硬的黑边 `strokeWidth` 描边。
-  - **穿透与唤醒**：默认开启鼠标穿透（`desktopLyricsLocked = true`），通过 `NSEvent` 的 `.flagsChanged` 监听 `Command (⌘)` 键；按住 `⌘` 移入歌词区域即唤醒 `.glassEffect` 毛玻璃卡片与顶部居中迷你控制栏（暂停/继续、锁定切换、隐藏桌面歌词），且只要鼠标仍停留在卡片内，松开 `⌘` 后依然保持唤醒状态可直接点击、拖动或双击卡片切下一首，鼠标移出卡片后自动恢复穿透。
+  - **穿透与唤醒**：默认开启鼠标穿透（`desktopLyricsLocked = true`），通过 `NSEvent` 的 `.flagsChanged` 与 `.leftMouseUp` 监听 `Command (⌘)` 键和按键释放（面板不可见时短路并复位状态）；按住 `⌘` 移入歌词区域即唤醒 `.glassEffect` 毛玻璃卡片与顶部居中迷你控制栏（暂停/继续、锁定切换、隐藏桌面歌词），且只要鼠标仍停留在卡片内，松开 `⌘` 后依然保持唤醒状态可直接点击、拖动或双击卡片切下一首，鼠标移出卡片（或按住移出后释放）自动恢复穿透。
 - **桌面组件**：[`DesktopWidget`](../../Sources/SoftLive/UI/Overlay/DesktopWidget.swift)，窗口层级为 `kCGDesktopIconWindowLevel + 1`（`NSWindow.Level.desktopWidget`），位于桌面图标之上、所有 App 窗口之下，共用顶部头部并通过 `.spring` 动画在紧凑态与展开态之间平滑过渡：
   - **未播放（紧凑态）**：单行卡片（高度 88 pt），不展示空白歌词区与进度条；左侧展示所选播放器最近曲目的专辑封面，中间展示最近曲目与歌手，右侧上方为 `播放` 胶囊按钮、下方为横向排列的播放器 App Icon 切换栏（通过图标亮暗区分选中态）。
   - **播放中（展开态）**：高度 146 pt，顶部头部信息列内联紧凑进度条与时间（`━━━── 1:51 / 4:04`），右侧提供**暂停/继续（`⏸`/`▶`）**和**关闭（`✕`，退出后台播放器并收起回紧凑小组件）**两个圆形按钮，双击卡片空白处切下一首；下方区域完整留给双行歌词区（逐字当前句 + 翻译或下一句）。

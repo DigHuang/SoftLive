@@ -9,8 +9,12 @@ final class AppleMusicSource: PlayerSource {
     let kind = PlayerKind.appleMusic
     var onChange: (() -> Void)?
     private(set) var state: PlaybackState? {
-        didSet { if state != oldValue { onChange?() } }
+        didSet {
+            if let track = state?.track { recentTrack = track }
+            if state != oldValue { onChange?() }
+        }
     }
+    private(set) var recentTrack: Track?
 
     private static let bundleID = PlayerKind.appleMusic.bundleID
     /// Drift beyond this between the extrapolated and the reported position is treated as a seek.
@@ -37,7 +41,7 @@ final class AppleMusicSource: PlayerSource {
         if let music = runningMusic() {
             music.perform(NSSelectorFromString("play"))
             refresh()
-            if state != nil { return }
+            return
         }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleID) else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: .init()) { [weak self] app, _ in

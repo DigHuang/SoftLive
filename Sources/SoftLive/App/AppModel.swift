@@ -135,6 +135,7 @@ final class AppModel {
             guard let source else { return }
             let image = await source.artwork(for: track)
             guard let self, !Task.isCancelled, self.recentTracks[kind] == track else { return }
+            self.recentArtworkTasks[kind] = nil
             self.recentArtworks[kind] = image
             if self.playback?.track == track {
                 self.artwork = image

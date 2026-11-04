@@ -13,7 +13,7 @@
 | 歌曲信息 | 历史表最新一行或 LevelDB `playingInfo.curTrack`；都没有时请求网易云歌曲详情接口（`NetEaseAPI.track(songID:)`） | 三种来源都由 [`NetEaseSong`](../../Sources/SoftLive/Network/NetEaseAPI.swift) 解析（接口的 ID 是数字，历史表与 `playingInfo` 里是字符串） |
 | 播放 / 暂停 | localStorage 的 `playingInfo.playingState`（`2` = 播放，`1` = 暂停），辅以 `lastPlaying` 的 4 秒静默超时（[`NetEaseLastPlaying`](../../Sources/SoftLive/Playback/NetEase/NetEaseLastPlaying.swift)） | 实测点击暂停或继续后，网页更新 `playingInfo` 并在 0.8–1.0 秒内落盘到 LevelDB `.log`；暂停状态下拖动进度条只会更新 `lastPlaying` 而保持暂停状态；播放期间 `lastPlaying` 每 1.5–2.0 秒落盘一次，暂停期间完全停止周期写入 |
 | 进度（用于开播缓冲校准与拖动后同步） | localStorage 的 `lastPlaying`：`Documents/storage/CEFCache/Local Storage/leveldb/*.log`（[`NetEaseLastPlaying`](../../Sources/SoftLive/Playback/NetEase/NetEaseLastPlaying.swift)） | 整数秒（`floor`），播放期间约每 1.8 秒写入一次磁盘，拖动后立即写一次；由相邻两条记录 `1.03s` 内从 `226` 跳到 `228` 实测可得，落盘时刻的真实进度在 `[n, n + 1.2)` 秒之间（之前测出的 `0.66–1.68` 秒实际混入了 `.info` 早于真音频出声的缓冲耗时）。`lastPlaying` 与 `playingInfo` 都用客户端内置的固定密钥做了 AES-128-ECB 加密（读法参考 CloudLyrics-for-macOS） |
-| 反向控制（播放 / 暂停 / 下一首 / 关闭） | `orpheus://<base64(json)>` URL Scheme（`{"cmd":"resume"}`、`{"cmd":"pause"}`、`{"cmd":"next"}`），通过 `NSWorkspace.OpenConfiguration(activates: false)` 后台投递；关闭通过 `NSRunningApplication.terminate()` | `resume` 幂等，冷启动时首个 URL 事件早于 CEF 页面注册消息处理器，因此后台补发 3 次以确保冷启动恢复播放 |
+| 反向控制（播放 / 暂停 / 下一首 / 关闭） | `orpheus://<base64(json)>` URL Scheme（`{"cmd":"resume"}`、`{"cmd":"pause"}`、`{"cmd":"next"}`），通过 `NSWorkspace.OpenConfiguration(activates: false)` 后台投递；关闭通过 `NSRunningApplication.terminate()` | `resume` 幂等，调用时同步通过 `noteSongStarted()` 启动 4 秒超时检测；冷启动时首个 URL 事件早于 CEF 页面注册消息处理器，因此后台补发 3 次以确保冷启动恢复播放 |
 
 ## 运行路径
 
