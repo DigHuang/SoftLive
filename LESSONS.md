@@ -24,14 +24,18 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 加入暂停/继续后，`NetEaseSource` 原有的两处逻辑仍假设歌曲从未暂停：`publish` 用 `now - start > duration + 5` 丢弃过期会话，`isNewPlay` 用 `latest.start - play.start >= duration` 判断同曲重播。若一首歌中途暂停了几分钟再恢复（或暂停期间重启 App 再恢复），墙钟时间已超过曲目时长，会导致恢复播放后被当成过期会话丢弃（且因 `play == latest` 卡死在 `state == nil`）或误判为从头重播；暂停状态下拖动进度条写出的单条 `lastPlaying` 也会被 `position != previous.position` 误判为恢复播放。必须区分“正在播放 vs 静止过期”、用计入暂停的 `state.position(at:)` 判断是否播完，并在收到 `playingState = 1` 明确暂停后抑制单条 `lastPlaying` 的假恢复。
 - 出现 1 次。
 
+**异步派生的缓存值必须在源键更新的同一同步帧清空，不能等异步任务返回再覆盖。**
+- `AppModel.updateRecentTrack` 在切歌时先把 `recentTracks[kind]` 更新为新曲目 B，却未同步清空 `recentArtworks[kind]`（仍留着曲目 A 的旧封面）；紧接着同帧执行的 `loadArtwork(for: B)` 检查 `recentTracks[kind] == B` 命中后直接复用了尚未被覆盖的旧封面 A，导致每次切歌后桌面组件显示的封面都滞后一首。
+- 出现 1 次。
+
 **觉得功能“没生效”时，先看输入里有没有它需要的数据，再查代码。**
 - 用户说看不到逐字效果。查下来，最近播放的几首歌在网易云上本来就没有逐字数据（普通接口和加密接口都没有），代码没问题。
 - 出现 1 次。
 
-**时序模型要从实测样本推出来，不要凭直觉。**
-- `ProgressCalibration` 的窗口（2 秒），来自连续 22 条 `lastPlaying` 记录的实测：真实进度比记录值高 0.66–1.68 秒。
-- 第一次写测试时，用“真实进度减延迟再取整”来模拟记录，会产生实际从未出现过的超过 2 秒的差；改成直接用实测的差值。
-- 出现 1 次。
+**时序模型要从实测样本推出来，且不能拿自身含偏差的参考系当真值。**
+- `ProgressCalibration` 第一版把 `.info` 缓存文件创建时间当成真音频 `0.0s` 起点，测出 `lastPlaying` 落盘时刻比 `(now - cacheStart)` 小 `0.66–1.68` 秒，于是设 `window = 2.0`。
+- 用户反馈“歌词比音乐快一点”后核查实时日志发现：`.info` 是在网络请求刚发起时创建的，比音频缓冲解码后实际出声早 `0.5–2.0` 秒（无损音质 `4999` 尤为明显）；而由相邻两次落盘仅隔 `1.032s` 却从 `226s` 跳到 `228s` 可直接证明，落盘时刻的真实音频进度其实只在 `[n, n + 1.2)` 秒内。旧的 `window = 2.0` 把 `.info` 的提前量当成了 `lastPlaying` 的滞后量，导致每首歌初期超前 `0.5–0.8` 秒时落在 `[n, n + 2.0)` 窗口内永不修正（或只修正到窗口中点，恒定超前约 `0.5–0.7` 秒）。将 `window` 缩窄为 `1.2` 后，开播前两次 `lastPlaying` 即可滤掉缓冲耗时、把误差收敛到 `0.1` 秒内。
+- 出现 2 次。
 
 **按分段子串的 UTF-16 长度在整行文本上推进游标时，整行文本不能单独做裁剪或改写。**
 - `YRCParser` 曾对 `words.map(\.text).joined()` 做了 `.trimmingCharacters(in: .whitespaces)`，但 `words` 保留了原始分词；当行首含空格词时，`KaraokeLayerView` 在 `CTLine` 上的 UTF-16 游标整体右偏，导致整行逐字高亮错位。
@@ -69,6 +73,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 
 **前后对比必须在相同条件下测。**
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。
+- 出现 1 次。
+
+**`NSWindow.ignoresMouseEvents = true` 不会阻止 SwiftUI `.onHover` 触发。**
+- SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将 `isHovering` 置为 `false`。
 - 出现 1 次。
 
 **和其他 App 交互，不能顺带把它启动起来。**

@@ -51,44 +51,33 @@ final class NetEaseSource: PlayerSource {
         launchPlay?.cancel()
 
         // When the client is already running with a loaded track, `resume` continues from the paused position.
-        if isRunning, state != nil {
+        if isRunning, var current = state {
             Self.log.info("resume requested")
-            sendOrpheus(#"{"cmd":"resume"}"#, activates: false)
-            if var current = state, !current.isPlaying {
+            sendOrpheus(#"{"cmd":"resume"}"#)
+            if !current.isPlaying {
                 current.setPlaying(true, at: .now)
                 state = current
             }
             return
         }
 
-        let entry = history.latest()
-        let songID = state?.track.netEaseSongID
-            ?? recentTrack?.netEaseSongID
-            ?? NetEasePlay.latest(cacheStarts: playCache.starts(), history: entry, report: lastPlaying.latest)?.songID
-            ?? lastPlaying.latestTrack?.netEaseSongID
-        Self.log.info("play requested (songID: \(songID ?? -1, privacy: .public), running: \(isRunning, privacy: .public))")
-
-        if state == nil, let track = recentTrack ?? entry?.track ?? lastPlaying.latestTrack {
+        if let track = recentTrack ?? history.latest()?.track ?? lastPlaying.latestTrack {
             let resumePos = lastPlaying.latest?.songID == track.netEaseSongID ? (lastPlaying.latest?.position ?? 0) : 0
             state = PlaybackState(track: track, isPlaying: true, position: resumePos, at: .now)
         }
+        Self.log.info("play requested (running: \(isRunning, privacy: .public))")
 
         let resumeCmd = #"{"cmd":"resume"}"#
-        if sendOrpheus(resumeCmd, activates: false) {
-            // On cold start, the initial URL event arrives before the client's CEF page registers
-            // its message handler; re-send `resume` (which is idempotent) as the page finishes loading.
-            launchPlay = Task { [weak self] in
-                for delay in [1.8, 1.4, 1.5] {
-                    try? await Task.sleep(for: .seconds(delay))
-                    guard let self, !Task.isCancelled else { return }
-                    self.sendOrpheus(resumeCmd, activates: false)
-                }
-                self?.launchPlay = nil
+        guard sendOrpheus(resumeCmd) else { return }
+        // On cold start, the initial URL event arrives before the client's CEF page registers
+        // its message handler; re-send `resume` (which is idempotent) as the page finishes loading.
+        launchPlay = Task { [weak self] in
+            for delay in [1.8, 1.4, 1.5] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                self.sendOrpheus(resumeCmd)
             }
-            return
-        }
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: NetEaseClient.bundleID) {
-            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+            self?.launchPlay = nil
         }
     }
 
@@ -97,23 +86,22 @@ final class NetEaseSource: PlayerSource {
         launchPlay = nil
         guard runningObserver?.isRunning == true else { return }
         Self.log.info("pause requested")
-        sendOrpheus(#"{"cmd":"pause"}"#, activates: false)
+        sendOrpheus(#"{"cmd":"pause"}"#)
         if var current = state, current.isPlaying {
             current.setPlaying(false, at: .now)
             state = current
         }
     }
 
+    func nextTrack() {
+        guard runningObserver?.isRunning == true else { return }
+        Self.log.info("next track requested")
+        sendOrpheus(#"{"cmd":"next"}"#)
+    }
+
     func close() {
-        launchPlay?.cancel()
-        launchPlay = nil
-        history.stopWatching()
-        playCache.stopWatching()
-        lastPlaying.stopWatching()
-        lookup?.cancel()
-        currentPlay = nil
-        state = nil
         Self.log.info("close requested")
+        runningChanged(false)
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: NetEaseClient.bundleID) {
             if !app.terminate() {
                 app.forceTerminate()
@@ -122,16 +110,15 @@ final class NetEaseSource: PlayerSource {
     }
 
     @discardableResult
-    private func sendOrpheus(_ json: String, activates: Bool) -> Bool {
+    private func sendOrpheus(_ json: String) -> Bool {
         let payload = Data(json.utf8).base64EncodedString()
-        guard let url = URL(string: "orpheus://\(payload)") else { return false }
-        if !activates, let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: NetEaseClient.bundleID) {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = false
-            NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: config)
-            return true
-        }
-        return NSWorkspace.shared.open(url)
+        guard let url = URL(string: "orpheus://\(payload)"),
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: NetEaseClient.bundleID)
+        else { return false }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: config)
+        return true
     }
 
     func artwork(for track: Track) async -> NSImage? {
@@ -141,6 +128,8 @@ final class NetEaseSource: PlayerSource {
 
     private func runningChanged(_ isRunning: Bool) {
         guard isRunning else {
+            launchPlay?.cancel()
+            launchPlay = nil
             history.stopWatching()
             playCache.stopWatching()
             lastPlaying.stopWatching()

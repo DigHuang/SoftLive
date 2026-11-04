@@ -18,9 +18,9 @@ enum PlayerKind: String, CaseIterable, Sendable {
         }
     }
 
-    @MainActor private static var iconCache: [PlayerKind: NSImage] = [:]
+    private static var iconCache: [PlayerKind: NSImage] = [:]
 
-    @MainActor var icon: NSImage? {
+    var icon: NSImage? {
         if let cached = Self.iconCache[self] { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let image = NSWorkspace.shared.icon(forFile: url.path)

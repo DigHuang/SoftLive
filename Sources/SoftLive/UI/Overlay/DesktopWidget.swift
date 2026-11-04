@@ -53,6 +53,7 @@ private struct DesktopWidgetView: View {
                 lyrics
                     .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
                     .padding(.top, 10)
+                    .allowsHitTesting(false)
                     .transition(.opacity)
             }
         }
@@ -60,7 +61,12 @@ private struct DesktopWidgetView: View {
         .frame(width: Self.cardWidth, height: isExpanded ? Self.expandedHeight : Self.compactHeight, alignment: .top)
         .clipped()
         .background {
-            Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 24))
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                .contentShape(.rect(cornerRadius: 24))
+                .onTapGesture(count: 2) {
+                    if playback != nil { model.nextTrack() }
+                }
         }
         .padding(Self.margin)
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
@@ -74,9 +80,10 @@ private struct DesktopWidgetView: View {
 
     private func header(playback: PlaybackState?, selected: PlayerKind, recent: Track?) -> some View {
         HStack(spacing: 12) {
-            Artwork(image: playback != nil ? (model.artwork ?? model.recentArtworks[selected]) : model.recentArtworks[selected])
+            Artwork(image: playback != nil ? model.artwork : model.recentArtworks[selected])
                 .frame(width: 52, height: 52)
                 .clipShape(.rect(cornerRadius: 11))
+                .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: playback != nil ? 2 : 4) {
                 Text(playback?.track.title ?? recent?.title ?? "未在播放")
@@ -91,6 +98,7 @@ private struct DesktopWidgetView: View {
                 }
             }
             .lineLimit(1)
+            .allowsHitTesting(false)
 
             Spacer(minLength: 0)
 

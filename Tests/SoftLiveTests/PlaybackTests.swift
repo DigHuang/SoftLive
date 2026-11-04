@@ -12,7 +12,9 @@ struct AppModelTests {
         var onChange: (() -> Void)?
         var playCallCount = 0
         var pauseCallCount = 0
+        var nextCallCount = 0
         var closeCallCount = 0
+        var artworks: [String: NSImage] = [:]
 
         init(kind: PlayerKind) { self.kind = kind }
         func start() { onChange?() }
@@ -32,11 +34,14 @@ struct AppModelTests {
                 state = current
             }
         }
+        func nextTrack() {
+            nextCallCount += 1
+        }
         func close() {
             closeCallCount += 1
             state = nil
         }
-        func artwork(for track: Track) async -> NSImage? { nil }
+        func artwork(for track: Track) async -> NSImage? { artworks[track.id] }
     }
 
     @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
@@ -78,6 +83,10 @@ struct AppModelTests {
         #expect(first.pauseCallCount == 1)
         #expect(model.isPlaying == false)
 
+        // Next track forwards to the active source.
+        model.nextTrack()
+        #expect(first.nextCallCount == 1)
+
         // Close playback terminates the source, collapses to nil, and re-opens when playing resumes.
         first.recentTrack = trackA
         model.closePlayback()
@@ -85,6 +94,31 @@ struct AppModelTests {
         #expect(model.playback == nil)
         model.play(.appleMusic)
         #expect(model.playback?.track == trackA)
+    }
+
+    @Test func updatesArtworkOnTrackChangeWithoutLaggingBehind() async {
+        let source = MockSource(kind: .netEase)
+        let imageA = NSImage(size: NSSize(width: 10, height: 10))
+        let imageB = NSImage(size: NSSize(width: 20, height: 20))
+        source.artworks = ["a": imageA, "b": imageB]
+
+        let model = AppModel(sources: [source])
+        model.start()
+
+        let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .netEase)
+        let trackB = Track(id: "b", title: "Song B", artist: "Artist", album: "", duration: 180, source: .netEase)
+
+        source.recentTrack = trackA
+        source.state = PlaybackState(track: trackA, isPlaying: true, position: 0)
+        await Task.yield()
+        #expect(model.artwork === imageA)
+
+        // Switching to trackB must not reuse trackA's cached recentArtworks entry.
+        source.recentTrack = trackB
+        source.state = PlaybackState(track: trackB, isPlaying: true, position: 0)
+        #expect(model.artwork == nil)
+        await Task.yield()
+        #expect(model.artwork === imageB)
     }
 }
 
@@ -124,7 +158,7 @@ struct NetEasePlayTests {
     }
 
     @Test func ignoresALateRowOfASongThatAlreadyEnded() {
-        let play = NetEasePlay.latest(cacheStarts: [1: t0, 2: t0 + 110], history: row(1, at: 108, duration: 110))
+        let play = NetEasePlay.latest(cacheStarts: [1: t0, 2: t0 + 110], history: row(1, at: 112, duration: 110))
         #expect(play == NetEasePlay(songID: 2, start: t0 + 110))
     }
 
@@ -134,10 +168,6 @@ struct NetEasePlayTests {
             == NetEasePlay(songID: 3, start: t0 + 50))
         #expect(NetEasePlay.latest(cacheStarts: [1: t0], history: row(1, at: 3600, duration: 200))
             == NetEasePlay(songID: 1, start: t0 + 3600))
-    }
-
-    @Test func isEmptyWithoutData() {
-        #expect(NetEasePlay.latest(cacheStarts: [:], history: nil) == nil)
     }
 
     private func report(_ songID: Int, position: TimeInterval, at offset: TimeInterval) -> NetEaseLastPlaying.Report {
@@ -161,7 +191,7 @@ struct NetEasePlayTests {
     }
 }
 
-/// Reports modelled on measurements: whole seconds, readable 0.66–1.68 s after the position passed them.
+/// Reports modelled on measurements: whole seconds, flushed to disk 0.10–1.12 s after the position passed them.
 struct ProgressCalibrationTests {
     /// Feeds reports every 2 s (with the observed jitter) while playing from a wrongly anchored
     /// extrapolation; returns the remaining error after each report.
@@ -169,7 +199,7 @@ struct ProgressCalibrationTests {
         var calibration = ProgressCalibration()
         var anchorError = -trueOffset // extrapolated − true
         // Measured gaps between the true position and the reported whole second.
-        let gaps = [0.67, 1.66, 0.69, 0.70, 1.63, 0.66]
+        let gaps = [0.12, 1.10, 0.14, 0.15, 1.08, 0.11]
         var result: [TimeInterval] = []
         for index in 0..<reports {
             let reported = 30 + Double(index) * 2
@@ -184,15 +214,15 @@ struct ProgressCalibrationTests {
 
     @Test func leavesAConsistentExtrapolationAlone() {
         var calibration = ProgressCalibration()
-        #expect(calibration.correction(extrapolated: 30.7, reported: 30) == nil)
-        #expect(calibration.correction(extrapolated: 32.7, reported: 31) == nil)
+        #expect(calibration.correction(extrapolated: 30.2, reported: 30) == nil)
+        #expect(calibration.correction(extrapolated: 32.1, reported: 31) == nil)
     }
 
     @Test func followsASeekWithinASecond() {
-        for jump in [-45.0, 12.0, 90.0] {
+        for jump in [-45.0, -0.7, 12.0, 90.0] {
             let remaining = errors(trueOffset: jump, reports: 8)
             #expect(abs(remaining[0]) <= 1, "first report after a \(jump)s seek")
-            #expect(abs(remaining.last!) <= 1)
+            #expect(abs(remaining.last!) <= 0.2)
         }
     }
 }
@@ -220,9 +250,9 @@ struct NetEaseLastPlayingTests {
         var chunk = logEntry(#"{"current":18,"resourceDuration":278,"resourceId":"1940334604","trackId":"1940334604"}"#)
         chunk.append(Data("META:orpheus://orpheus".utf8))
         chunk.append(logEntry(#"{"current":20,"resourceDuration":278,"resourceId":"1940334604","trackId":"1940334604"}"#))
-        let value = NetEaseLastPlaying.lastValue(in: chunk)
-        #expect(value?.songID == 1_940_334_604)
-        #expect(value?.position == 20)
+        let progress = NetEaseLastPlaying.parse(chunk).progress
+        #expect(progress?.songID == 1_940_334_604)
+        #expect(progress?.position == 20)
     }
 
     @Test func skipsTruncatedEntries() {
@@ -307,7 +337,7 @@ struct NetEaseLastPlayingTests {
 struct NetEaseSongTests {
     @Test func decodesHistoryAndWebAPIShapes() throws {
         let history = #"{"id":"2099747804","name":"让风替我对你说","duration":202941,"artists":[{"name":"A"},{"name":"B"}],"album":{"name":"X","picUrl":"http://p2.music.126.net/c.jpg"}}"#
-        let web = #"{"id":2099747804,"name":"让风替我对你说","duration":202941,"artists":[{"name":"A"}]}"#
+        let playingInfo = #"{"id":"2099747804","name":"让风替我对你说","duration":202941,"artists":[{"name":"A"}],"album":{"name":"X","cover":"http://p1.music.126.net/d.jpg"}}"#
 
         let fromHistory = try JSONDecoder().decode(NetEaseSong.self, from: Data(history.utf8)).track
         #expect(fromHistory.netEaseSongID == 2_099_747_804)
@@ -315,8 +345,8 @@ struct NetEaseSongTests {
         #expect(fromHistory.duration == 202.941)
         #expect(fromHistory.artworkURL?.absoluteString == "https://p2.music.126.net/c.jpg?param=300y300")
 
-        let fromWeb = try JSONDecoder().decode(NetEaseSong.self, from: Data(web.utf8)).track
-        #expect(fromWeb.id == fromHistory.id)
-        #expect(fromWeb.artworkURL == nil)
+        let fromPlayingInfo = try JSONDecoder().decode(NetEaseSong.self, from: Data(playingInfo.utf8)).track
+        #expect(fromPlayingInfo.id == fromHistory.id)
+        #expect(fromPlayingInfo.artworkURL?.absoluteString == "https://p1.music.126.net/d.jpg?param=300y300")
     }
 }

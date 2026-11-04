@@ -54,11 +54,15 @@ final class AppModel {
         }
     }
 
+    func nextTrack() {
+        activeSource?.nextTrack()
+    }
+
     func closePlayback() {
         isDismissed = true
-        activeSource?.close()
-        playback = nil
-        syncCurrentLine()
+        guard let source = activeSource else { return }
+        source.close()
+        sourceDidChange(source)
     }
 
     // MARK: Display
@@ -109,12 +113,10 @@ final class AppModel {
         let newPlayback = (isDismissed && activeSource?.state?.isPlaying != true) ? nil : activeSource?.state
         let trackChanged = newPlayback?.track != playback?.track
         playback = newPlayback
-        if let track = newPlayback?.track, trackChanged {
-            loadLyrics(for: track)
-            loadArtwork(for: track)
+        if trackChanged {
+            loadLyrics(for: newPlayback?.track)
+            loadArtwork(for: newPlayback?.track)
             offset = 0 // Also re-syncs the current line.
-        } else if newPlayback == nil {
-            syncCurrentLine()
         } else {
             syncCurrentLine()
         }
@@ -125,15 +127,18 @@ final class AppModel {
         let track = source.recentTrack
         guard recentTracks[kind] != track else { return }
         recentTracks[kind] = track
+        recentArtworks[kind] = nil
         recentArtworkTasks[kind]?.cancel()
-        guard let track else {
-            recentArtworks[kind] = nil
-            return
-        }
-        recentArtworkTasks[kind] = Task { [weak self, unowned source] in
+        recentArtworkTasks[kind] = nil
+        guard let track else { return }
+        recentArtworkTasks[kind] = Task { [weak self, weak source] in
+            guard let source else { return }
             let image = await source.artwork(for: track)
             guard let self, !Task.isCancelled, self.recentTracks[kind] == track else { return }
             self.recentArtworks[kind] = image
+            if self.playback?.track == track {
+                self.artwork = image
+            }
         }
     }
 
@@ -158,9 +163,14 @@ final class AppModel {
         artworkTask?.cancel()
         artwork = nil
         guard let track, let source = activeSource else { return }
-        if recentTracks[track.source] == track, let cached = recentArtworks[track.source] {
-            artwork = cached
-            return
+        if recentTracks[track.source] == track {
+            if let cached = recentArtworks[track.source] {
+                artwork = cached
+                return
+            }
+            if recentArtworkTasks[track.source] != nil {
+                return
+            }
         }
         artworkTask = Task { [weak self] in
             let image = await source.artwork(for: track)

@@ -12,6 +12,7 @@ protocol PlayerSource: AnyObject {
     func start()
     func play()
     func pause()
+    func nextTrack()
     func close()
     func artwork(for track: Track) async -> NSImage?
 }
@@ -20,5 +21,6 @@ extension PlayerSource {
     var recentTrack: Track? { state?.track }
     func play() {}
     func pause() {}
+    func nextTrack() {}
     func close() {}
 }

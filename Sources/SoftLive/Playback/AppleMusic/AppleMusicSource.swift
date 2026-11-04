@@ -61,6 +61,12 @@ final class AppleMusicSource: PlayerSource {
         }
     }
 
+    func nextTrack() {
+        guard let music = runningMusic() else { return }
+        music.perform(NSSelectorFromString("nextTrack"))
+        refresh()
+    }
+
     func close() {
         seekCheckTimer?.invalidate()
         seekCheckTimer = nil

@@ -26,7 +26,7 @@ final class Preferences {
         defaults.register(defaults: [
             Key.statusBar: true,
             Key.desktop: true,
-            Key.locked: false,
+            Key.locked: true,
             Key.widget: false,
             Key.player: PlayerKind.netEase.rawValue,
         ])

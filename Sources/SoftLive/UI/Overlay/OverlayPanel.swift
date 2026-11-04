@@ -98,26 +98,43 @@ private final class OverlayHostingView<Content: View>: NSHostingView<Content>, O
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = event.locationInWindow
-        super.mouseDown(with: event)
+        super.mouseDown(with: Self.strippingCommand(event))
     }
 
     override func mouseDragged(with event: NSEvent) {
+        let clean = Self.strippingCommand(event)
         if let start = mouseDownPoint,
            hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) >= 4 {
             mouseDownPoint = nil
-            window?.performDrag(with: event)
+            window?.performDrag(with: clean)
             return
         }
-        super.mouseDragged(with: event)
+        super.mouseDragged(with: clean)
     }
 
     override func mouseUp(with event: NSEvent) {
         mouseDownPoint = nil
-        super.mouseUp(with: event)
+        super.mouseUp(with: Self.strippingCommand(event))
     }
 
     override func rightMouseDown(with event: NSEvent) {
         guard let menu else { return super.rightMouseDown(with: event) }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Strips the Command (⌘) modifier so clicking buttons while holding ⌘ behaves like a normal click.
+    private static func strippingCommand(_ event: NSEvent) -> NSEvent {
+        guard event.modifierFlags.contains(.command) else { return event }
+        return NSEvent.mouseEvent(
+            with: event.type,
+            location: event.locationInWindow,
+            modifierFlags: event.modifierFlags.subtracting(.command),
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            eventNumber: event.eventNumber,
+            clickCount: event.clickCount,
+            pressure: event.pressure
+        ) ?? event
     }
 }

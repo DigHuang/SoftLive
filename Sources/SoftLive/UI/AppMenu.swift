@@ -36,7 +36,7 @@ final class AppMenu: NSObject, NSMenuDelegate {
         menu.addItem(item("桌面歌词", isOn: preferences.showsDesktopLyrics) { [preferences] in
             preferences.showsDesktopLyrics.toggle()
         })
-        menu.addItem(item("锁定桌面歌词（鼠标穿透）", isOn: preferences.desktopLyricsLocked) { [preferences] in
+        menu.addItem(item("锁定桌面歌词（按住 ⌘ 移入唤醒）", isOn: preferences.desktopLyricsLocked) { [preferences] in
             preferences.desktopLyricsLocked.toggle()
         })
         menu.addItem(item("桌面组件", isOn: preferences.showsDesktopWidget) { [preferences] in
