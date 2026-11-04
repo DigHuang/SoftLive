@@ -1,14 +1,31 @@
-import Foundation
+import AppKit
 
-enum PlayerKind: String, Sendable {
-    case appleMusic
+enum PlayerKind: String, CaseIterable, Sendable {
     case netEase
+    case appleMusic
 
     var displayName: String {
         switch self {
         case .appleMusic: "Apple Music"
         case .netEase: "网易云音乐"
         }
+    }
+
+    var bundleID: String {
+        switch self {
+        case .appleMusic: "com.apple.Music"
+        case .netEase: "com.netease.163music"
+        }
+    }
+
+    @MainActor private static var iconCache: [PlayerKind: NSImage] = [:]
+
+    @MainActor var icon: NSImage? {
+        if let cached = Self.iconCache[self] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: url.path)
+        Self.iconCache[self] = image
+        return image
     }
 }
 

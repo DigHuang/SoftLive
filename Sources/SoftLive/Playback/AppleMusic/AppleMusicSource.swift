@@ -6,12 +6,13 @@ import ScriptingBridge
 /// Music posts `com.apple.Music.playerInfo` on track changes and play/pause, so those are event driven.
 /// It posts nothing when the user seeks, hence a low-frequency position check while playing.
 final class AppleMusicSource: PlayerSource {
+    let kind = PlayerKind.appleMusic
     var onChange: (() -> Void)?
     private(set) var state: PlaybackState? {
         didSet { if state != oldValue { onChange?() } }
     }
 
-    private static let bundleID = "com.apple.Music"
+    private static let bundleID = PlayerKind.appleMusic.bundleID
     /// Drift beyond this between the extrapolated and the reported position is treated as a seek.
     private static let seekThreshold: TimeInterval = 0.4
     private static let seekCheckInterval: TimeInterval = 2
@@ -30,6 +31,44 @@ final class AppleMusicSource: PlayerSource {
             MainActor.assumeIsolated { self?.refresh() }
         }
         refresh()
+    }
+
+    func play() {
+        if let music = runningMusic() {
+            music.perform(NSSelectorFromString("play"))
+            refresh()
+            if state != nil { return }
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleID) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: .init()) { [weak self] app, _ in
+            guard let pid = app?.processIdentifier else { return }
+            Task { @MainActor [weak self] in
+                if let sb = SBApplication(processIdentifier: pid) {
+                    sb.timeout = 60
+                    sb.perform(NSSelectorFromString("play"))
+                }
+                self?.refresh()
+            }
+        }
+    }
+
+    func pause() {
+        guard let music = runningMusic() else { return }
+        music.perform(NSSelectorFromString("pause"))
+        if var current = state, current.isPlaying {
+            current.setPlaying(false, at: .now)
+            state = current
+        }
+    }
+
+    func close() {
+        seekCheckTimer?.invalidate()
+        seekCheckTimer = nil
+        music = nil
+        state = nil
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID) {
+            app.terminate()
+        }
     }
 
     func artwork(for track: Track) async -> NSImage? {

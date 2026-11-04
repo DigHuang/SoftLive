@@ -63,6 +63,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；需在视图层用 `!isHiddenOrHasHiddenAncestor` 和可见状态显式短路。
 - 出现 1 次。
 
+**新增交互入口（按钮、菜单、URL Scheme 唤起）必须在真实运行态下点击并核对日志，不能只跑单元测试。**
+- 桌面组件首次加上「开始播放」按钮和 `orpheus://` 唤起时只跑了单元测试就交付；实际存在三处运行态问题：① `OverlayHostingView.hitTest(_:)` 的参数在父视图未翻转坐标系中，直接按 `isFlipped` 裁剪导致顶部按钮区域返回 `nil`、点击穿透到桌面（后改为锚定 `frame.maxY` 直接调整 `NSPanel` 高度）；② `.borderless` 的 `NSPanel` 默认 `canBecomeKey == false`，未重写时点击控件只打印 `makeKeyWindow` 警告；③ 网易云冷启动时首个 `orpheus://` 事件早于 CEF 页面就绪而丢失，需在未进入播放态时延迟补发。
+- 出现 1 次。
+
 **前后对比必须在相同条件下测。**
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。
 - 出现 1 次。

@@ -6,20 +6,52 @@ import Testing
 
 struct AppModelTests {
     private final class MockSource: PlayerSource {
+        let kind: PlayerKind
         var state: PlaybackState? { didSet { onChange?() } }
+        var recentTrack: Track? { didSet { onChange?() } }
         var onChange: (() -> Void)?
+        var playCallCount = 0
+        var pauseCallCount = 0
+        var closeCallCount = 0
+
+        init(kind: PlayerKind) { self.kind = kind }
         func start() { onChange?() }
+        func play() {
+            playCallCount += 1
+            if var current = state, !current.isPlaying {
+                current.setPlaying(true)
+                state = current
+            } else if state == nil, let recent = recentTrack {
+                state = PlaybackState(track: recent, isPlaying: true, position: 0)
+            }
+        }
+        func pause() {
+            pauseCallCount += 1
+            if var current = state, current.isPlaying {
+                current.setPlaying(false)
+                state = current
+            }
+        }
+        func close() {
+            closeCallCount += 1
+            state = nil
+        }
         func artwork(for track: Track) async -> NSImage? { nil }
     }
 
     @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
-        let first = MockSource()
-        let second = MockSource()
+        let first = MockSource(kind: .appleMusic)
+        let second = MockSource(kind: .netEase)
         let model = AppModel(sources: [first, second])
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
         let trackB = Track(id: "b", title: "Song B", artist: "Artist", album: "", duration: 180, source: .netEase)
+        second.recentTrack = trackB
+        #expect(model.recentTracks[.netEase] == trackB)
+
+        model.play(.netEase)
+        #expect(second.playCallCount == 1)
 
         first.state = PlaybackState(track: trackA, isPlaying: true, position: 0)
         #expect(model.playback?.track == trackA)
@@ -36,6 +68,22 @@ struct AppModelTests {
 
         // First source also pauses: stays with the current source while it still has a track.
         first.state = PlaybackState(track: trackA, isPlaying: false, position: 20)
+        #expect(model.playback?.track == trackA)
+
+        // Resume and pause via togglePlayPause.
+        model.togglePlayPause()
+        #expect(first.playCallCount == 1)
+        #expect(model.isPlaying == true)
+        model.togglePlayPause()
+        #expect(first.pauseCallCount == 1)
+        #expect(model.isPlaying == false)
+
+        // Close playback terminates the source, collapses to nil, and re-opens when playing resumes.
+        first.recentTrack = trackA
+        model.closePlayback()
+        #expect(first.closeCallCount == 1)
+        #expect(model.playback == nil)
+        model.play(.appleMusic)
         #expect(model.playback?.track == trackA)
     }
 }

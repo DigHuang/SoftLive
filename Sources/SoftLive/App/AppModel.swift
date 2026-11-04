@@ -7,6 +7,8 @@ final class AppModel {
     enum LyricsStatus { case idle, loading, loaded, notFound }
 
     private(set) var playback: PlaybackState?
+    private(set) var recentTracks: [PlayerKind: Track] = [:]
+    private(set) var recentArtworks: [PlayerKind: NSImage] = [:]
     private(set) var lyrics: Lyrics?
     private(set) var lyricsStatus = LyricsStatus.idle
     private(set) var currentIndex: Int?
@@ -18,9 +20,11 @@ final class AppModel {
 
     @ObservationIgnored private let sources: [any PlayerSource]
     @ObservationIgnored private var activeSource: (any PlayerSource)?
+    @ObservationIgnored private var isDismissed = false
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var recentArtworkTasks: [PlayerKind: Task<Void, Never>] = [:]
     @ObservationIgnored private var lineTimer: Timer?
 
     init(sources: [any PlayerSource] = [AppleMusicSource(), NetEaseSource()]) {
@@ -31,7 +35,30 @@ final class AppModel {
         for source in sources {
             source.onChange = { [weak self, unowned source] in self?.sourceDidChange(source) }
             source.start()
+            updateRecentTrack(for: source)
         }
+    }
+
+    func play(_ kind: PlayerKind) {
+        isDismissed = false
+        guard let source = sources.first(where: { $0.kind == kind }) else { return }
+        source.play()
+        sourceDidChange(source)
+    }
+
+    func togglePlayPause() {
+        if isPlaying {
+            activeSource?.pause()
+        } else if let kind = playback?.track.source {
+            play(kind)
+        }
+    }
+
+    func closePlayback() {
+        isDismissed = true
+        activeSource?.close()
+        playback = nil
+        syncCurrentLine()
     }
 
     // MARK: Display
@@ -69,23 +96,44 @@ final class AppModel {
     // MARK: Sync
 
     private func sourceDidChange(_ source: any PlayerSource) {
+        updateRecentTrack(for: source)
         // A player that starts playing takes over; otherwise prefer any playing source, or stay with the current one.
         if source.state?.isPlaying == true {
+            isDismissed = false
             activeSource = source
         } else if activeSource?.state?.isPlaying != true {
             activeSource = sources.first { $0.state?.isPlaying == true }
                 ?? (activeSource?.state != nil ? activeSource : sources.first { $0.state != nil })
         }
 
-        let newPlayback = activeSource?.state
+        let newPlayback = (isDismissed && activeSource?.state?.isPlaying != true) ? nil : activeSource?.state
         let trackChanged = newPlayback?.track != playback?.track
         playback = newPlayback
-        if trackChanged {
-            loadLyrics(for: newPlayback?.track)
-            loadArtwork(for: newPlayback?.track)
+        if let track = newPlayback?.track, trackChanged {
+            loadLyrics(for: track)
+            loadArtwork(for: track)
             offset = 0 // Also re-syncs the current line.
+        } else if newPlayback == nil {
+            syncCurrentLine()
         } else {
             syncCurrentLine()
+        }
+    }
+
+    private func updateRecentTrack(for source: any PlayerSource) {
+        let kind = source.kind
+        let track = source.recentTrack
+        guard recentTracks[kind] != track else { return }
+        recentTracks[kind] = track
+        recentArtworkTasks[kind]?.cancel()
+        guard let track else {
+            recentArtworks[kind] = nil
+            return
+        }
+        recentArtworkTasks[kind] = Task { [weak self, unowned source] in
+            let image = await source.artwork(for: track)
+            guard let self, !Task.isCancelled, self.recentTracks[kind] == track else { return }
+            self.recentArtworks[kind] = image
         }
     }
 
@@ -110,10 +158,17 @@ final class AppModel {
         artworkTask?.cancel()
         artwork = nil
         guard let track, let source = activeSource else { return }
+        if recentTracks[track.source] == track, let cached = recentArtworks[track.source] {
+            artwork = cached
+            return
+        }
         artworkTask = Task { [weak self] in
             let image = await source.artwork(for: track)
             guard let self, !Task.isCancelled, self.playback?.track == track else { return }
             self.artwork = image
+            if self.recentTracks[track.source] == track {
+                self.recentArtworks[track.source] = image
+            }
         }
     }
 
