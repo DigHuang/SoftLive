@@ -21,6 +21,7 @@ struct KaraokeText: View {
             line: line,
             playback: model.playback,
             offset: model.offset,
+            interlude: model.interlude,
             fontSize: fontSize,
             weight: weight,
             color: color,
@@ -35,6 +36,7 @@ private struct KaraokeLayerRepresentable: NSViewRepresentable {
     let line: LyricLine
     let playback: PlaybackState?
     let offset: TimeInterval
+    let interlude: Interlude?
     let fontSize: CGFloat
     let weight: NSFont.Weight
     let color: NSColor
@@ -50,6 +52,7 @@ private struct KaraokeLayerRepresentable: NSViewRepresentable {
             line: line,
             playback: playback,
             offset: offset,
+            interlude: interlude,
             fontSize: fontSize,
             weight: weight,
             color: color,

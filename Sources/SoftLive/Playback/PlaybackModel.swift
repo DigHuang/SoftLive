@@ -12,6 +12,7 @@ final class PlaybackModel {
     private(set) var lyrics: Lyrics?
     private(set) var lyricsStatus = LyricsStatus.idle
     private(set) var currentIndex: Int?
+    private(set) var interlude: Interlude?
     private(set) var artwork: NSImage?
     /// Manual correction for the current track, in seconds; positive shows lyrics earlier.
     var offset: TimeInterval = 0 {
@@ -77,7 +78,7 @@ final class PlaybackModel {
         return lyrics.lines[index]
     }
 
-    var currentLine: LyricLine? { line(0) }
+    var currentLine: LyricLine? { interlude == nil ? line(0) : nil }
 
     /// Main text: the current lyric line, or the track while there is none.
     var headline: String {
@@ -93,7 +94,9 @@ final class PlaybackModel {
         case .loading: return "正在搜索歌词…"
         case .notFound: return "暂无歌词"
         case .idle: return nil
-        case .loaded: return line(1)?.text
+        case .loaded:
+            guard let lyrics, let next = lyrics.nextSungIndex(after: currentIndex, skipCredits: interlude != nil) else { return nil }
+            return lyrics.lines[next].text
         }
     }
 
@@ -188,17 +191,19 @@ final class PlaybackModel {
         lineTimer?.invalidate()
         lineTimer = nil
         guard let playback, let lyrics else {
-            currentIndex = nil
+            if currentIndex != nil { currentIndex = nil }
+            if interlude != nil { interlude = nil }
             return
         }
 
         let position = playback.position() + offset
         let index = lyrics.lineIndex(at: position)
         if index != currentIndex { currentIndex = index }
+        let activeInterlude = lyrics.interlude(at: position)
+        if activeInterlude != interlude { interlude = activeInterlude }
 
-        let next = (index ?? -1) + 1
-        guard playback.isPlaying, lyrics.lines.indices.contains(next) else { return }
-        let delay = max(0.01, lyrics.lines[next].time - position)
+        guard playback.isPlaying, let nextTime = lyrics.nextEventTime(after: position) else { return }
+        let delay = max(0.01, nextTime - position)
         lineTimer = Timer.onMain(after: delay) { [weak self] in self?.syncCurrentLine() }
     }
 }

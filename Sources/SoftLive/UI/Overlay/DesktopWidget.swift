@@ -186,9 +186,14 @@ private struct DesktopWidgetView: View {
     @ViewBuilder
     private var lyrics: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let line = model.currentLine, !line.text.isEmpty {
-                KaraokeText(line: line, model: model, fontSize: 19, weight: .bold)
-                if let sub = line.translation ?? model.line(1)?.text, !sub.isEmpty {
+            if model.interlude != nil || (model.currentLine?.text.isEmpty == false) {
+                KaraokeText(
+                    line: model.currentLine ?? LyricLine(time: 0, text: ""),
+                    model: model,
+                    fontSize: 19,
+                    weight: .bold
+                )
+                if let sub = model.subline, !sub.isEmpty {
                     Text(sub).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
             } else if let sub = model.subline, !sub.isEmpty {

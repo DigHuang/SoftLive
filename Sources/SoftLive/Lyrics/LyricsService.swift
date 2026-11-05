@@ -5,7 +5,7 @@ import Foundation
 final class LyricsService {
     private var memory: [String: Lyrics?] = [:]
     private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appending(path: "SoftLive/Lyrics-v2", directoryHint: .isDirectory) // v2: word timing
+        .appending(path: "SoftLive/Lyrics-v4", directoryHint: .isDirectory) // v4: non-empty lines + word-based endTime
 
     func lyrics(for track: Track) async -> Lyrics? {
         let key = "\(track.source.rawValue)-\(track.id)"
