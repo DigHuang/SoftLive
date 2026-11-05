@@ -37,6 +37,11 @@ import Testing
         #expect(SystemMetrics.formatRate(128 * 1024) == "128 KB/s")
         #expect(SystemMetrics.formatRate(UInt64(2.4 * 1_048_576)) == "2.4 MB/s")
         #expect(SystemMetrics.formatRate(25 * 1_048_576) == "25 MB/s")
+
+        #expect(SystemMetrics.formatCompactRate(512) == "0 B")
+        #expect(SystemMetrics.formatCompactRate(621 * 1024) == "621 KB")
+        #expect(SystemMetrics.formatCompactRate(UInt64(2.4 * 1_048_576)) == "2.4 MB")
+        #expect(SystemMetrics.formatCompactRate(25 * 1_048_576) == "25 MB")
     }
 
     @Test func rendersColoredStatusBarImageWithVerticalBars() {
@@ -64,6 +69,14 @@ import Testing
 
         monitor.setDetailActive(true)
         #expect(monitor.isDetailActive)
+        #expect(monitor.activeTab == .cpu)
+
+        monitor.setActiveTab(.ram)
+        #expect(monitor.activeTab == .ram)
+        #expect(monitor.detailMetrics.memoryDetails.totalBytes > 0)
+
+        monitor.setActiveTab(.tmp)
+        #expect(monitor.activeTab == .tmp)
 
         monitor.setDetailActive(false)
         #expect(!monitor.isDetailActive)

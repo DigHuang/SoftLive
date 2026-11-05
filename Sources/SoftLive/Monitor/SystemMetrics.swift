@@ -65,22 +65,26 @@ struct SystemMetrics: Equatable, Sendable {
     }
 
     static func formatRate(_ bytesPerSec: UInt64) -> String {
+        "\(formatCompactRate(bytesPerSec))/s"
+    }
+
+    static func formatCompactRate(_ bytesPerSec: UInt64) -> String {
         if bytesPerSec < 1024 {
-            return "0 B/s"
+            return "0 B"
         }
         let kb = Double(bytesPerSec) / 1024
         if kb < 1000 {
-            return "\(Int(kb.rounded())) KB/s"
+            return "\(Int(kb.rounded())) KB"
         }
         let mb = kb / 1024
         if mb < 10 {
-            return String(format: "%.1f MB/s", mb)
+            return String(format: "%.1f MB", mb)
         }
         if mb < 1000 {
-            return "\(Int(mb.rounded())) MB/s"
+            return "\(Int(mb.rounded())) MB"
         }
         let gb = mb / 1024
-        return String(format: "%.1f GB/s", gb)
+        return String(format: "%.1f GB", gb)
     }
 }
 

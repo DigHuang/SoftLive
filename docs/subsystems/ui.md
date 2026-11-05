@@ -5,18 +5,18 @@
 - **只读数据与快捷控制**：界面只读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift)、[`SystemMonitor`](../../Sources/SoftLive/Monitor/SystemMonitor.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，并通过 `PlaybackModel.play(_:)`、`togglePlayPause()`、`nextTrack()`、`closePlayback()` 控制播放与收起，不直接接触播放器内部实现、内核采样器或网络。
 - **状态栏歌词**：[`LyricsStatusBar`](../../Sources/SoftLive/UI/StatusBar/LyricsStatusBar.swift) 显示 `PlaybackModel.headline`，最大宽度 260 pt，长句尾部截断；当用户在菜单中关闭「状态栏歌词」且「显示状态栏监控」已开启时，自动隐藏该状态栏项（`isVisible = false`），节省刘海屏菜单栏空间。
 - **状态栏系统监控**：[`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 是独立的状态栏项（`variableLength` 紧凑图像宽度 `52 × 22 pt`），用单张非模板图像（`isTemplate = false`）同时实现文字自适应明暗菜单栏与三柱语义着色，并在弹窗打开期间保持状态栏按钮高亮选中态（`button.highlight(true)`）：
-  - **左侧（`0 .. 33 pt`）**：上下两行右对齐纯数值网速（上行上传、下行下载，去掉冗余的 `↑`/`↓` 箭头，`8.0 pt` 等宽数字 + `NSColor.labelColor` 动态适配浅色/深色菜单栏）。
+  - **左侧（`0 .. 33 pt`）**：上下两行右对齐纯数值紧凑网速（`SystemMetrics.formatCompactRate`，上行上传、下行下载，去掉 `↑`/`↓` 箭头与 `/s` 后缀，最宽 `999 MB` 实测 `31.70 pt` 永不截断，`8.0 pt` 等宽数字 + `NSColor.labelColor` 动态适配浅色/深色菜单栏）。
   - **右侧（`39.0 .. 52.0 pt`，与网速列间距 `6.0 pt`）**：三根高度 `17 pt` 的纵向语义彩色胶囊柱（按 **CPU · RAM · TMP** 排列，量程统一为 `0 ~ 100`，与左侧双行文字上下边缘平齐，通过 `NSColor(name: nil) { appearance in ... }` 与 `NSColor.labelColor.withAlphaComponent(0.22)` 自适应浅色/深色菜单栏对比度）：
     - **CPU 柱**：青色（浅色模式 `#0284C7` / 深色模式 `#38BDF8`；负载 `≥ 75%` 时转为高负载活力橙）。
     - **RAM 柱**：随内核 `memoryPressure` 实时联动变色（正常翡翠绿 → 压力偏高琥珀黄 → 压力吃紧珊瑚红）。
     - **TMP 柱**：热力渐变（`< 55 °C` 冰川青 → `55–72 °C` 琥珀黄 → `≥ 72 °C` 珊瑚红）。
-  - **macOS 26+ 原生 Liquid Glass 动态高度详情面板**：左键按下（`.leftMouseDown`）弹出 `.nonactivatingPanel` 承载 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)（不调用 `NSApp.activate()`，避免在刘海屏上因切换前台菜单栏导致状态栏图标跨刘海跳变；使用 `acceptsFirstMouse` + `.onTapGesture` 支持非激活态首击直达切换，并通过全局/本地鼠标与 `Esc` 监听实现点击外部即收起；收起时同步设置 `contentView.isHidden = true` 并在 `!monitor.isDetailActive` 时直接返回空视图短路 SwiftUI 重算）。
+  - **macOS 26+ 原生 Liquid Glass 动态高度详情面板**：左键按下（`.leftMouseDown`）弹出 `.nonactivatingPanel` 承载 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)（不调用 `NSApp.activate()`，避免在刘海屏上因切换前台菜单栏导致状态栏图标跨刘海跳变；使用 `acceptsFirstMouse` + `.onTapGesture` 支持非激活态首击直达切换，并通过全局/本地鼠标与 `Esc` 监听实现点击外部即收起；视图树与 `.glassEffect` 常驻挂载、仅观察 `monitor.detailMetrics`，弹窗收起时 `detailMetrics` 不更新且 `contentView.isHidden = true`，后台 0 重算、再次打开时 0 重建开销）。
     - **原生亮暗自适应与 Liquid Glass**：不强制固定深色背景，直接使用系统原生 `Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 22))` 毛玻璃材质与动态语义色盘（`MonitorPalette`），自动跟随系统浅色/深色外观。
-    - **动态高度与恒定内边距**：`.glassEffect` 直接包裹自然高度的 `VStack(spacing: 10).padding(14)`（不使用 `maxHeight: .infinity` 撑开底部空白），因此无论切换到 `CPU`、`RAM` 还是较短的 `TMP` 标签页，四周边距恒定为 `14 pt`，卡片高度通过 `.spring` 动画贴合内容，并通过 `onGeometryChange` 同步更新 `FirstMouseHostingView.activeTopHeight` 使下方透明区域点击穿透并关闭弹窗。
+    - **动态高度与恒定内边距**：`.glassEffect` 直接包裹自然高度的 `VStack(spacing: 10).padding(14)`（不使用 `maxHeight: .infinity` 撑开底部空白），内部进度柱全部使用已知固定尺寸直接计算（0 个 `GeometryReader`），四周边距恒定为 `14 pt`，卡片高度通过 `.spring` 动画贴合内容，并通过 `onGeometryChange` 同步更新 `FirstMouseHostingView.activeTopHeight` 使下方透明区域点击穿透并关闭弹窗。
     - **三页遥测与进程强杀**：
       - **CPU 标签页**：芯片型号与核心拓扑徽章（`Apple M4 · 4P + 6E`）、60 秒总负载波形、用户/系统/平均负载、**能效核 E + 性能核 P + GPU 硬件渲染** 11 柱矩阵，以及 **高占用进程 Top 10**（每行右侧带 `✕` → 红色 `结束` 二次确认胶囊，点击期间锁定列表排序防止跳动，确认后直接终止进程）。
       - **RAM 标签页**：已用/总计内存与**内存压力徽章**、60 秒内存趋势波形、四段多色构成条（`App` / `联动` / `压缩` / `Swap`），以及同样支持一键结束的 **物理内存大户 Top 10（`Phys Footprint`）**。
-      - **TMP 标签页**：SoC 核心温度与热状态徽章、60 秒温度波形、**整机实时功耗（`W`）与散热风扇转速（`RPM`）双卡片**，以及 5 项硬件关键部位热力分布条（SoC 性能核峰值、SoC 核心均值、主板与供电 PMU、SSD 固态闪存、智能电池）。
+      - **TMP 标签页**：SoC 核心温度与热状态徽章、60 秒温度波形、**整机实时功耗（`W`）与散热风扇转速（`RPM`）双卡片**，以及 5 项硬件关键部位热力分布条（SoC 性能核峰值、SoC 核心均值、主板与供电 PMU、SSD 固态闪存、智能电池）；底栏显示实时 `KB/s` / `MB/s` 上下行网速。
   - **去重与缓存**：字体与段落属性字典缓存为 `static let`，仅在网速文本、柱高步进或内存压力等级（`DisplayKey`）变化时才重绘 `NSImage`。
 - **菜单**：[`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是唯一的菜单，两个状态栏项、右键桌面歌词或桌面组件、再次打开 App 都弹出它。
 - **悬浮面板基类**：[`OverlayPanel`](../../Sources/SoftLive/UI/Overlay/OverlayPanel.swift) 是桌面歌词和桌面组件共用的面板。

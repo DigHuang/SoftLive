@@ -36,6 +36,7 @@ final class CPUSampler {
     private var previousTotal: CPUTicks?
     private var previousCores: [CPUTicks] = []
     private var cachedDetails = CPUDetails()
+    private let gpuSampler = GPUSampler()
     private let chipName: String
     private let performanceCoreCount: Int
     private let efficiencyCoreCount: Int
@@ -82,7 +83,7 @@ final class CPUSampler {
                 chipName: chipName,
                 userUsage: split.user,
                 systemUsage: split.system,
-                gpuUsage: GPUSampler.sampleUtilization(),
+                gpuUsage: gpuSampler.sampleUtilization(),
                 efficiencyCores: eCores,
                 performanceCores: pCores,
                 efficiencyUsage: eAvg,
@@ -146,31 +147,30 @@ final class CPUSampler {
 
 // MARK: - GPU Sampler (IOAccelerator)
 
-enum GPUSampler {
-    static func sampleUtilization() -> Double {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(
-            kIOMainPortDefault,
-            IOServiceMatching("IOAccelerator"),
-            &iterator
-        ) == KERN_SUCCESS else { return 0 }
-        defer { IOObjectRelease(iterator) }
+final class GPUSampler {
+    private var service: io_service_t = 0
 
-        var entry = IOIteratorNext(iterator)
-        while entry != 0 {
-            defer {
-                IOObjectRelease(entry)
-                entry = IOIteratorNext(iterator)
-            }
-            var props: Unmanaged<CFMutableDictionary>?
-            guard IORegistryEntryCreateCFProperties(entry, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                  let dict = props?.takeRetainedValue() as? [String: Any],
-                  let perf = dict["PerformanceStatistics"] as? [String: Any],
-                  let util = perf["Device Utilization %"] as? Int
-            else { continue }
-            return min(max(Double(util) / 100.0, 0), 1)
+    init() {
+        service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOAccelerator"))
+    }
+
+    isolated deinit {
+        if service != 0 {
+            IOObjectRelease(service)
         }
-        return 0
+    }
+
+    func sampleUtilization() -> Double {
+        guard service != 0,
+              let prop = IORegistryEntryCreateCFProperty(
+                  service,
+                  "PerformanceStatistics" as CFString,
+                  kCFAllocatorDefault,
+                  0
+              )?.takeRetainedValue() as? NSDictionary,
+              let util = prop["Device Utilization %"] as? Int
+        else { return 0 }
+        return min(max(Double(util) / 100.0, 0), 1)
     }
 }
 
@@ -184,6 +184,8 @@ final class ProcessSampler {
 
     private var previousCPUTicks: [pid_t: UInt64] = [:]
     private var previousInstant: ContinuousClock.Instant?
+    private var cachedTopCPU: [ProcessMetric] = []
+    private var cachedTopMemory: [ProcessMetric] = []
     private var metaCache: [pid_t: ProcessMeta] = [:]
     private let timebaseNumer: Double
     private let timebaseDenom: Double
@@ -195,18 +197,52 @@ final class ProcessSampler {
         timebaseDenom = Double(max(tb.denom, 1))
     }
 
+    /// Snapshots per-process CPU ticks without sorting or resolving metadata.
+    /// Called right after popover presentation finishes so one-time window-opening
+    /// rendering ticks are not attributed to SoftLive's ongoing CPU percentage.
+    func captureBaseline(now: ContinuousClock.Instant = .now) {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return }
+        var pids = [pid_t](repeating: 0, count: Int(count * 2))
+        let byteSize = Int32(pids.count * MemoryLayout<pid_t>.stride)
+        let actual = Int(proc_listallpids(&pids, byteSize))
+        guard actual > 0 else { return }
+
+        var nextCPUTicks: [pid_t: UInt64] = [:]
+        nextCPUTicks.reserveCapacity(actual)
+        for idx in 0..<actual {
+            let pid = pids[idx]
+            guard pid > 0 else { continue }
+            var usage = rusage_info_v4()
+            let res = withUnsafeMutablePointer(to: &usage) { ptr in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rPtr in
+                    proc_pid_rusage(pid, RUSAGE_INFO_V4, rPtr)
+                }
+            }
+            guard res == 0 else { continue }
+            nextCPUTicks[pid] = usage.ri_user_time &+ usage.ri_system_time
+        }
+        previousCPUTicks = nextCPUTicks
+        previousInstant = now
+    }
+
     func sample(
         now: ContinuousClock.Instant = .now,
         totalMemoryBytes: UInt64,
         limit: Int = 10,
-        excludingPIDs: Set<pid_t> = []
+        excludingPIDs: Set<pid_t> = [],
+        needCPU: Bool = true,
+        needMemory: Bool = true
     ) -> (topCPU: [ProcessMetric], topMemory: [ProcessMetric]) {
+        guard needCPU || needMemory else {
+            return (cachedTopCPU, cachedTopMemory)
+        }
         let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return ([], []) }
+        guard count > 0 else { return (cachedTopCPU, cachedTopMemory) }
         var pids = [pid_t](repeating: 0, count: Int(count * 2))
         let byteSize = Int32(pids.count * MemoryLayout<pid_t>.stride)
         let actual = Int(proc_listallpids(&pids, byteSize))
-        guard actual > 0 else { return ([], []) }
+        guard actual > 0 else { return (cachedTopCPU, cachedTopMemory) }
 
         let elapsedSeconds: Double
         if let previousInstant {
@@ -235,58 +271,63 @@ final class ProcessSampler {
             let totalTicks = usage.ri_user_time &+ usage.ri_system_time
             nextCPUTicks[pid] = totalTicks
 
-            let pct: Double
-            if elapsedSeconds > 0.05, let prevTicks = previousCPUTicks[pid], totalTicks >= prevTicks {
-                let deltaNs = Double(totalTicks - prevTicks) * timebaseNumer / timebaseDenom
-                pct = (deltaNs / (elapsedSeconds * 1_000_000_000.0)) * 100.0
-            } else {
-                pct = 0
-            }
-            if totalTicks > 0 {
+            if needCPU, totalTicks > 0 {
+                let pct: Double
+                if elapsedSeconds > 0.05, let prevTicks = previousCPUTicks[pid], totalTicks >= prevTicks {
+                    let deltaNs = Double(totalTicks - prevTicks) * timebaseNumer / timebaseDenom
+                    pct = (deltaNs / (elapsedSeconds * 1_000_000_000.0)) * 100.0
+                } else {
+                    pct = 0
+                }
                 cpuCandidates.append((pid, pct, totalTicks))
             }
 
-            let footprint = usage.ri_phys_footprint
-            if footprint > 1_048_576 {
-                memCandidates.append((pid, footprint))
+            if needMemory {
+                let footprint = usage.ri_phys_footprint
+                if footprint > 1_048_576 {
+                    memCandidates.append((pid, footprint))
+                }
             }
         }
 
         previousCPUTicks = nextCPUTicks
         previousInstant = now
 
-        cpuCandidates.sort {
-            if abs($0.percent - $1.percent) > 0.05 {
-                return $0.percent > $1.percent
+        if needCPU {
+            cpuCandidates.sort {
+                if abs($0.percent - $1.percent) > 0.05 {
+                    return $0.percent > $1.percent
+                }
+                return $0.totalTicks > $1.totalTicks
             }
-            return $0.totalTicks > $1.totalTicks
-        }
-        memCandidates.sort { $0.bytes > $1.bytes }
-
-        let topCPU = cpuCandidates.prefix(limit).map { item -> ProcessMetric in
-            let meta = resolveMeta(for: item.pid)
-            return ProcessMetric(
-                pid: item.pid,
-                name: meta.name,
-                bundlePath: meta.bundlePath,
-                valueText: String(format: "%.1f%%", item.percent),
-                fraction: min(max(item.percent / 100.0, 0), 1)
-            )
+            cachedTopCPU = cpuCandidates.prefix(limit).map { item -> ProcessMetric in
+                let meta = resolveMeta(for: item.pid)
+                return ProcessMetric(
+                    pid: item.pid,
+                    name: meta.name,
+                    bundlePath: meta.bundlePath,
+                    valueText: String(format: "%.1f%%", item.percent),
+                    fraction: min(max(item.percent / 100.0, 0), 1)
+                )
+            }
         }
 
-        let safeTotalMem = Double(max(totalMemoryBytes, 1))
-        let topMem = memCandidates.prefix(limit).map { item -> ProcessMetric in
-            let meta = resolveMeta(for: item.pid)
-            return ProcessMetric(
-                pid: item.pid,
-                name: meta.name,
-                bundlePath: meta.bundlePath,
-                valueText: SystemMetrics.formatBytes(item.bytes),
-                fraction: min(max(Double(item.bytes) / (safeTotalMem * 0.4), 0), 1)
-            )
+        if needMemory {
+            memCandidates.sort { $0.bytes > $1.bytes }
+            let safeTotalMem = Double(max(totalMemoryBytes, 1))
+            cachedTopMemory = memCandidates.prefix(limit).map { item -> ProcessMetric in
+                let meta = resolveMeta(for: item.pid)
+                return ProcessMetric(
+                    pid: item.pid,
+                    name: meta.name,
+                    bundlePath: meta.bundlePath,
+                    valueText: SystemMetrics.formatBytes(item.bytes),
+                    fraction: min(max(Double(item.bytes) / (safeTotalMem * 0.4), 0), 1)
+                )
+            }
         }
 
-        return (topCPU, topMem)
+        return (cachedTopCPU, cachedTopMemory)
     }
 
     static func terminate(pid: pid_t, force: Bool = false) -> Bool {
@@ -303,7 +344,7 @@ final class ProcessSampler {
     ]
 
     private func resolveMeta(for pid: pid_t) -> ProcessMeta {
-        if let cached = metaCache[pid], !Self.genericCLIBinaries.contains(cached.name) {
+        if let cached = metaCache[pid] {
             return cached
         }
         var pathBuf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
@@ -338,12 +379,10 @@ final class ProcessSampler {
         }
 
         let meta = ProcessMeta(name: name, bundlePath: bundlePath)
-        if !Self.genericCLIBinaries.contains(name.lowercased()) {
-            if metaCache.count > 256 {
-                metaCache.removeAll(keepingCapacity: true)
-            }
-            metaCache[pid] = meta
+        if metaCache.count > 256 {
+            metaCache.removeAll(keepingCapacity: true)
         }
+        metaCache[pid] = meta
         return meta
     }
 
