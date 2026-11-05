@@ -74,60 +74,52 @@ struct MonitorPopoverView: View {
     )
 
     let monitor: SystemMonitor
-    let onOpenMenu: () -> Void
     var onActiveHeightChange: ((CGFloat) -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
-    @State private var selectedTab: MonitorTab = .cpu
     @State private var confirmingPID: pid_t?
     @State private var frozenProcesses: [ProcessMetric]?
     @State private var confirmResetTask: Task<Void, Never>?
 
-    private var metrics: SystemMetrics { monitor.metrics }
+    private var metrics: SystemMetrics { monitor.detailMetrics }
+    private var selectedTab: MonitorTab { monitor.activeTab }
 
     var body: some View {
-        Group {
-            if monitor.isDetailActive {
-                VStack(alignment: .leading, spacing: 10) {
-                    tabBar
-                    switch selectedTab {
-                    case .cpu:
-                        cpuTabContent
-                    case .ram:
-                        ramTabContent
-                    case .tmp:
-                        tmpTabContent
-                    }
-                    footerBar
-                }
-                .padding(Self.innerPadding)
-                .frame(width: Self.cardWidth)
-                .background {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(
-                                colorScheme == .dark
-                                    ? Color(red: 0.07, green: 0.09, blue: 0.13).opacity(0.55)
-                                    : Color.white.opacity(0.62)
-                            )
-                        Color.clear
-                            .glassEffect(.regular, in: .rect(cornerRadius: 22))
-                    }
-                }
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.height
-                } action: { cardHeight in
-                    onActiveHeightChange?(cardHeight + 2 * Self.margin)
-                }
-                .padding(Self.margin)
-                .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
-                .animation(.spring(duration: 0.28, bounce: 0.05), value: selectedTab)
-                .focusEffectDisabled()
-            } else {
+        VStack(alignment: .leading, spacing: 10) {
+            tabBar
+            switch selectedTab {
+            case .cpu:
+                cpuTabContent
+            case .ram:
+                ramTabContent
+            case .tmp:
+                tmpTabContent
+            }
+            footerBar
+        }
+        .padding(Self.innerPadding)
+        .frame(width: Self.cardWidth)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(
+                        colorScheme == .dark
+                            ? Color(red: 0.07, green: 0.09, blue: 0.13).opacity(0.55)
+                            : Color.white.opacity(0.62)
+                    )
                 Color.clear
-                    .frame(width: 0, height: 0)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 22))
             }
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { cardHeight in
+            onActiveHeightChange?(cardHeight + 2 * Self.margin)
+        }
+        .padding(Self.margin)
+        .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
+        .animation(.spring(duration: 0.28, bounce: 0.05), value: selectedTab)
+        .focusEffectDisabled()
     }
 
     // MARK: - Horizontal Tab Bar (CPU / RAM / TMP)
@@ -178,7 +170,7 @@ struct MonitorPopoverView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     cancelConfirm()
-                    selectedTab = tab
+                    monitor.setActiveTab(tab)
                 }
             }
         }
@@ -319,17 +311,16 @@ struct MonitorPopoverView: View {
 
     private func coreVerticalBar(label: String, fraction: Double, color: Color) -> some View {
         let clamped = min(max(fraction, 0), 1)
+        let barHeight: CGFloat = 31
         return VStack(spacing: 3) {
-            GeometryReader { geo in
-                ZStack(alignment: .bottom) {
-                    Capsule()
-                        .fill(trackColor)
-                    Capsule()
-                        .fill(color)
-                        .frame(height: max(3.5, geo.size.height * clamped))
-                }
+            ZStack(alignment: .bottom) {
+                Capsule()
+                    .fill(trackColor)
+                Capsule()
+                    .fill(color)
+                    .frame(height: max(3.5, barHeight * clamped))
             }
-            .frame(width: 7)
+            .frame(width: 7, height: barHeight)
             Text(label)
                 .font(.system(size: 8, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -383,29 +374,28 @@ struct MonitorPopoverView: View {
             // Multi-segment Memory Composition Card
             hudCard {
                 VStack(alignment: .leading, spacing: 7) {
-                    GeometryReader { geo in
-                        let total = Double(max(d.totalBytes, 1))
-                        let appW = geo.size.width * min(Double(d.appBytes) / total, 1)
-                        let wiredW = geo.size.width * min(Double(d.wiredBytes) / total, 1)
-                        let compW = geo.size.width * min(Double(d.compressedBytes) / total, 1)
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(trackColor)
-                            HStack(spacing: 1.5) {
-                                Rectangle()
-                                    .fill(MonitorPalette.cyan)
-                                    .frame(width: max(0, appW))
-                                Rectangle()
-                                    .fill(MonitorPalette.indigo)
-                                    .frame(width: max(0, wiredW))
-                                Rectangle()
-                                    .fill(MonitorPalette.teal)
-                                    .frame(width: max(0, compW))
-                            }
-                            .clipShape(Capsule())
+                    let barWidth: CGFloat = Self.cardWidth - 2 * Self.innerPadding - 20
+                    let total = Double(max(d.totalBytes, 1))
+                    let appW = barWidth * min(Double(d.appBytes) / total, 1)
+                    let wiredW = barWidth * min(Double(d.wiredBytes) / total, 1)
+                    let compW = barWidth * min(Double(d.compressedBytes) / total, 1)
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(trackColor)
+                        HStack(spacing: 1.5) {
+                            Rectangle()
+                                .fill(MonitorPalette.cyan)
+                                .frame(width: max(0, appW))
+                            Rectangle()
+                                .fill(MonitorPalette.indigo)
+                                .frame(width: max(0, wiredW))
+                            Rectangle()
+                                .fill(MonitorPalette.teal)
+                                .frame(width: max(0, compW))
                         }
+                        .clipShape(Capsule())
                     }
-                    .frame(height: 7)
+                    .frame(width: barWidth, height: 7)
 
                     HStack(spacing: 0) {
                         ramLegendPill(color: MonitorPalette.cyan, title: "App", bytes: d.appBytes)
@@ -545,6 +535,7 @@ struct MonitorPopoverView: View {
     private func thermalZoneBar(label: String, celsius: Double?) -> some View {
         let progress = SystemMetrics.thermalProgress(celsius)
         let color = MonitorPalette.thermalColor(celsius)
+        let barWidth: CGFloat = 94
         return HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
@@ -552,16 +543,14 @@ struct MonitorPopoverView: View {
                 .frame(width: 128, alignment: .leading)
                 .lineLimit(1)
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(trackColor)
-                    Capsule()
-                        .fill(color)
-                        .frame(width: max(4, geo.size.width * progress))
-                }
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(trackColor)
+                Capsule()
+                    .fill(color)
+                    .frame(width: max(4, barWidth * progress))
             }
-            .frame(height: 5.5)
+            .frame(width: barWidth, height: 5.5)
 
             Text(SystemMetrics.formatTemperatureDetail(celsius))
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
@@ -625,14 +614,12 @@ struct MonitorPopoverView: View {
                             Spacer(minLength: 4)
 
                             if !isConfirming {
-                                GeometryReader { geo in
-                                    ZStack(alignment: .leading) {
-                                        Capsule()
-                                            .fill(trackColor)
-                                        Capsule()
-                                            .fill(barColor)
-                                            .frame(width: max(3, geo.size.width * min(max(proc.fraction, 0), 1)))
-                                    }
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(trackColor)
+                                    Capsule()
+                                        .fill(barColor)
+                                        .frame(width: max(3, 30 * min(max(proc.fraction, 0), 1)))
                                 }
                                 .frame(width: 30, height: 4)
                             }
@@ -709,10 +696,10 @@ struct MonitorPopoverView: View {
         frozenProcesses = nil
     }
 
-    // MARK: - Footer Bar (Live Network + Menu Entry)
+    // MARK: - Footer Bar (Live Network)
 
     private var footerBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             HStack(spacing: 4) {
                 Circle()
                     .fill(MonitorPalette.cyan)
@@ -730,32 +717,6 @@ struct MonitorPopoverView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            HStack(spacing: 4) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("设置")
-                    .font(.system(size: 10.5, weight: .semibold))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3.5)
-            .background(
-                colorScheme == .dark
-                    ? Color.white.opacity(0.08)
-                    : Color.white.opacity(0.80),
-                in: Capsule()
-            )
-            .overlay {
-                Capsule()
-                    .strokeBorder(
-                        colorScheme == .dark
-                            ? Color.white.opacity(0.10)
-                            : Color(red: 0.12, green: 0.16, blue: 0.24).opacity(0.065),
-                        lineWidth: 0.5
-                    )
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onOpenMenu)
         }
     }
 

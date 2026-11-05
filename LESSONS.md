@@ -66,8 +66,9 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
   用 `sample` 定位到 `TextRenderer` 每帧都对整行重新排版，改成 Core Animation 后降到 0–0.8%。
 - 出现 2 次。
 
-**隐藏 `NSPanel` 或 `contentView` 不会自动停止 `NSHostingView` 的观察和 `TimelineView` 调度。**
-- 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；同样地，`MonitorPopoverPanel` 关闭后若未在 `MonitorPopoverView.body` 顶层按 `monitor.isDetailActive` 短路，每 2 秒更新 `monitor.metrics` 都会在后台触发整棵弹窗 SwiftUI 视图树与 `.glassEffect` 的重算。需在面板收起时设置 `contentView.isHidden = true`，并在视图顶层根据可见/激活状态直接返回空占位视图显式短路。
+**隐藏 `NSPanel` 或 `contentView` 不会自动停止 `NSHostingView` 的观察和 `TimelineView` 调度；但频繁开关的弹窗不要用 `if/else` 销毁整棵视图树与 `.glassEffect`，而应隔离 `@Observable` 数据源。**
+- 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒。
+- `MonitorPopoverView` 曾为了防止后台重算而在 `body` 顶层写 `if monitor.isDetailActive { ... } else { Color.clear }`，结果每次关闭弹窗都会把整棵 SwiftUI 视图树、27 个 `GeometryReader` 和 `.glassEffect` 毛玻璃图层全部销毁，每次点击打开弹窗时主线程又必须从零重建整棵视图树与毛玻璃层，造成打开瞬间 CPU 飙高。将状态栏快照 `metrics` 与弹窗快照 `detailMetrics`（仅在弹窗展开时更新）拆开后，`MonitorPopoverView` 保持常驻挂载且只观察 `detailMetrics`（并用固定尺寸替代 27 个 `GeometryReader`），收起时后台 0 重算、打开时 0 重建开销。
 - 出现 2 次。
 
 **高频进度事件或拖动校对路径上，不能顺带执行全量磁盘/SQLite 扫描或全字段跨进程 IPC。**
@@ -83,10 +84,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - `NSEvent` 的 `.flagsChanged` 会在按下任意修饰键或方向键时触发，且 `@Observable` 属性每次赋值（哪怕新旧值相等）都会触发 `withMutation` 唤醒 `Observations`。若 `LyricsInteraction` 未在 `!panel.isVisible` 时短路、或未判断新旧值不等再写入，会导致隐藏状态下按任意修饰键仍在后台高频触发观察循环，甚至在鼠标偶经隐藏面板区域按 `⌘` 时提前把 `isAwake` 置为 `true`。
 - 出现 2 次。
 
-**周期性状态栏采样与重绘必须避免全量跨进程 IPC、重复的 `NSStatusItem` 场景属性设置与无效重绘。**
-- 第一版 `ThermalSampler.sample()` 每秒对全部 14 个 `PMU tdie*` 传感器调用 `IOHIDServiceClientCopyEvent`（底层走 `io_hideventsystem_copy_event_for_service` → `hidd` Mach IPC），同时 `MonitorStatusBar` 每秒无条件赋值 `item.isVisible = true` 和 `item.length`（在 macOS 26 的 `NSSceneStatusItem` 上触发 `FrontBoardServices` 场景同步）并重建字体字典与 `NSImage`，导致单状态栏监控就占用 1–4% CPU。
-- 通过 `sample` 定位后，改为只保留 1 个主传感器句柄且每 3 秒查 1 次、缓存 `static let` 字体与段落样式、仅在 `item.isVisible` 变化时写入，并按格式化后的 `DisplayKey` 去重重绘，采样与渲染在 5 秒（5000 次采样）中仅占 7 个样本（约 0.14% CPU）。
-- 出现 1 次。
+**周期性状态栏采样与弹窗详情采样必须避免全量跨进程 IPC、全字典 IORegistry 序列化、缓存穿透以及把开窗渲染耗时计入自身进程 CPU。**
+- 第一版 `ThermalSampler.sample()` 每秒对全部 14 个 `PMU tdie*` 传感器调用 `IOHIDServiceClientCopyEvent`（底层走 `io_hideventsystem_copy_event_for_service` → `hidd` Mach IPC），同时 `MonitorStatusBar` 每秒无条件赋值 `item.isVisible = true` 和 `item.length`（在 macOS 26 的 `NSSceneStatusItem` 上触发 `FrontBoardServices` 场景同步）并重建字体字典与 `NSImage`，导致单状态栏监控就占用 1–4% CPU。改为只保留 1 个主传感器句柄且每 3 拍查 1 次、缓存 `static let` 字体与段落样式、仅在 `item.isVisible` 变化时写入，并按 `DisplayKey` 去重重绘后，平时后台降至约 0.14% CPU。
+- 打开详情弹窗时，曾无条件同时采样 `CPU / RAM / TMP` 三个标签页的全部详情（含 20+ 个温度传感器的 Mach IPC 与 SMC 调用），`GPUSampler` 每次调用 `IORegistryEntryCreateCFProperties` 序列化整个 `IOAccelerator` 注册表大字典（单次耗费 `1.05 ms` CPU），`ProcessSampler.resolveMeta` 对名字仍为 `"zsh"`/`"node"` 的通用进程拒绝写入 `metaCache` 导致每次都重复调用 `KERN_PROCARGS2` 与 `PROC_PIDVNODEPATHINFO`，且 `setDetailActive(true)` 在 `t = 0`（开窗渲染前）与 `t = 320 ms`（开窗渲染后）连跑两次采样，把开窗那一瞬间的渲染开销除以 `0.32s` 放大成 `SoftLive 15%–25%` 的假峰值。改为按当前 `activeTab` 按需采样、`GPUSampler` 缓存服务句柄并单查 `"PerformanceStatistics"`（降至 `0.016 ms`，快 65 倍）、`metaCache` 缓存全部已解析 PID，并在窗口首帧提交完成（`60 ms`）后再重置 `captureBaseline()`，彻底消除了打开弹窗时的 CPU 尖峰。
+- 出现 2 次。
 
 **和其他 App 交互，不能顺带把它启动起来。**
 - 退出 Music 后，它会被 SoftLive 重新拉起：Music 退出时仍会发 `playerInfo` 通知，而按 bundle ID 创建的 `SBApplication` 一查询就会启动目标。

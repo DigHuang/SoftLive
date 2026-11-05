@@ -211,8 +211,8 @@ final class MonitorStatusBar: NSObject {
         let pressure: MemoryPressureLevel
 
         init(metrics: SystemMetrics) {
-            upText = SystemMetrics.formatRate(metrics.uploadBytesPerSec)
-            downText = SystemMetrics.formatRate(metrics.downloadBytesPerSec)
+            upText = SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec)
+            downText = SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec)
             cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
             ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
             tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
@@ -241,15 +241,7 @@ final class MonitorStatusBar: NSObject {
         item.button?.sendAction(on: [.leftMouseDown, .rightMouseUp])
 
         let popoverPanel = MonitorPopoverPanel(
-            rootView: MonitorPopoverView(
-                monitor: monitor,
-                onOpenMenu: { [weak self] in
-                    guard let self else { return }
-                    self.panel?.dismiss()
-                    NSApp.activate()
-                    self.menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-                }
-            )
+            rootView: MonitorPopoverView(monitor: monitor)
         )
         popoverPanel.onClose = { [weak monitor] in
             monitor?.setDetailActive(false)
@@ -288,8 +280,8 @@ final class MonitorStatusBar: NSObject {
         if panel.isVisible {
             panel.dismiss()
         } else {
-            panel.show(below: button)
             monitor.setDetailActive(true)
+            panel.show(below: button)
         }
     }
 
