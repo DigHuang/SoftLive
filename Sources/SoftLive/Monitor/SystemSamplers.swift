@@ -35,6 +35,9 @@ struct CPUTicks: Equatable, Sendable {
 final class CPUSampler {
     private var previousTotal: CPUTicks?
     private var previousCores: [CPUTicks] = []
+    private var lastBaselineTotal: CPUTicks?
+    private var lastBaselineCores: [CPUTicks] = []
+    private var cachedUsage: Double = 0
     private var cachedDetails = CPUDetails()
     private let gpuSampler = GPUSampler()
     private let chipName: String
@@ -51,7 +54,7 @@ final class CPUSampler {
 
     func sample(includeDetails: Bool = false, topProcesses: [ProcessMetric] = []) -> (usage: Double, details: CPUDetails) {
         guard let cores = Self.readCoreTicks(), !cores.isEmpty else {
-            return (0, cachedDetails)
+            return (cachedUsage, cachedDetails)
         }
         var total = CPUTicks()
         for core in cores {
@@ -60,16 +63,29 @@ final class CPUSampler {
             total.idle &+= core.idle
             total.nice &+= core.nice
         }
-        defer {
+        guard let prevTotal = previousTotal else {
             previousTotal = total
             previousCores = cores
+            return (0, cachedDetails)
         }
-        guard let previousTotal else { return (0, cachedDetails) }
-        let usage = CPUTicks.usage(from: previousTotal, to: total)
 
-        if includeDetails, previousCores.count == cores.count {
-            let split = CPUTicks.split(from: previousTotal, to: total)
-            let perCore = zip(previousCores, cores).map { CPUTicks.usage(from: $0, to: $1) }
+        let totalDelta = total.total &- prevTotal.total
+        if totalDelta >= 32 || (totalDelta > 0 && lastBaselineTotal == nil) {
+            lastBaselineTotal = prevTotal
+            lastBaselineCores = previousCores
+            previousTotal = total
+            previousCores = cores
+            cachedUsage = CPUTicks.usage(from: prevTotal, to: total)
+        }
+
+        let baseTotal = lastBaselineTotal ?? prevTotal
+        let baseCores = lastBaselineCores.isEmpty ? previousCores : lastBaselineCores
+        let currentTotal = previousTotal ?? total
+        let currentCores = previousCores.isEmpty ? cores : previousCores
+
+        if includeDetails, baseCores.count == currentCores.count {
+            let split = CPUTicks.split(from: baseTotal, to: currentTotal)
+            let perCore = zip(baseCores, currentCores).map { CPUTicks.usage(from: $0, to: $1) }
             let eCount = min(efficiencyCoreCount, perCore.count)
             let eCores = eCount > 0 ? Array(perCore.prefix(eCount)) : []
             let pCores = eCount > 0 ? Array(perCore.dropFirst(eCount)) : perCore
@@ -92,7 +108,7 @@ final class CPUSampler {
                 topProcesses: topProcesses
             )
         }
-        return (usage, cachedDetails)
+        return (cachedUsage, cachedDetails)
     }
 
     private static func readCoreTicks() -> [CPUTicks]? {
@@ -226,6 +242,13 @@ final class ProcessSampler {
         previousInstant = now
     }
 
+    func isCPUBaselineStale(at now: ContinuousClock.Instant = .now) -> Bool {
+        guard let previousInstant else { return true }
+        let d = previousInstant.duration(to: now)
+        let seconds = Double(d.components.seconds) + Double(d.components.attoseconds) * 1e-18
+        return seconds > 3.5
+    }
+
     func sample(
         now: ContinuousClock.Instant = .now,
         totalMemoryBytes: UInt64,
@@ -252,6 +275,7 @@ final class ProcessSampler {
             elapsedSeconds = 0
         }
 
+        let canComputeCPU = elapsedSeconds > 0.05
         var nextCPUTicks: [pid_t: UInt64] = [:]
         nextCPUTicks.reserveCapacity(actual)
         var cpuCandidates: [(pid: pid_t, percent: Double, totalTicks: UInt64)] = []
@@ -273,7 +297,7 @@ final class ProcessSampler {
 
             if needCPU, totalTicks > 0 {
                 let pct: Double
-                if elapsedSeconds > 0.05, let prevTicks = previousCPUTicks[pid], totalTicks >= prevTicks {
+                if canComputeCPU, let prevTicks = previousCPUTicks[pid], totalTicks >= prevTicks {
                     let deltaNs = Double(totalTicks - prevTicks) * timebaseNumer / timebaseDenom
                     pct = (deltaNs / (elapsedSeconds * 1_000_000_000.0)) * 100.0
                 } else {
@@ -290,25 +314,35 @@ final class ProcessSampler {
             }
         }
 
-        previousCPUTicks = nextCPUTicks
-        previousInstant = now
+        if !metaCache.isEmpty {
+            metaCache = metaCache.filter { nextCPUTicks[$0.key] != nil }
+        }
+
+        if canComputeCPU || previousInstant == nil {
+            previousCPUTicks = nextCPUTicks
+            previousInstant = now
+        }
 
         if needCPU {
-            cpuCandidates.sort {
-                if abs($0.percent - $1.percent) > 0.05 {
-                    return $0.percent > $1.percent
+            if canComputeCPU || cachedTopCPU.isEmpty {
+                cpuCandidates.sort {
+                    if abs($0.percent - $1.percent) > 0.05 {
+                        return $0.percent > $1.percent
+                    }
+                    return $0.totalTicks > $1.totalTicks
                 }
-                return $0.totalTicks > $1.totalTicks
-            }
-            cachedTopCPU = cpuCandidates.prefix(limit).map { item -> ProcessMetric in
-                let meta = resolveMeta(for: item.pid)
-                return ProcessMetric(
-                    pid: item.pid,
-                    name: meta.name,
-                    bundlePath: meta.bundlePath,
-                    valueText: String(format: "%.1f%%", item.percent),
-                    fraction: min(max(item.percent / 100.0, 0), 1)
-                )
+                cachedTopCPU = cpuCandidates.prefix(limit).map { item -> ProcessMetric in
+                    let meta = resolveMeta(for: item.pid)
+                    return ProcessMetric(
+                        pid: item.pid,
+                        name: meta.name,
+                        bundlePath: meta.bundlePath,
+                        valueText: String(format: "%.1f%%", item.percent),
+                        fraction: min(max(item.percent / 100.0, 0), 1)
+                    )
+                }
+            } else if !excludingPIDs.isEmpty {
+                cachedTopCPU.removeAll { excludingPIDs.contains($0.pid) }
             }
         }
 
@@ -723,11 +757,11 @@ final class ThermalSampler {
             let serviceRef = service as CFTypeRef
             guard let nameRef = copyProperty(serviceRef, "Product" as CFString)?.takeRetainedValue(),
                   let name = nameRef as? String,
-                  !name.contains("tcal"),
-                  readCelsius(from: serviceRef) != nil
+                  !name.contains("tcal")
             else { continue }
 
             if Self.isCoreSensorName(name) {
+                guard readCelsius(from: serviceRef) != nil else { continue }
                 if primarySensor == nil {
                     primarySensor = serviceRef
                 }
@@ -742,11 +776,11 @@ final class ThermalSampler {
                         )
                     )
                 }
-            } else if name.hasPrefix("NAND") && nandSensor == nil {
+            } else if name.hasPrefix("NAND"), nandSensor == nil, readCelsius(from: serviceRef) != nil {
                 nandSensor = serviceRef
-            } else if name == "gas gauge battery" && batterySensor == nil {
+            } else if name == "gas gauge battery", batterySensor == nil, readCelsius(from: serviceRef) != nil {
                 batterySensor = serviceRef
-            } else if name.contains("tdev") {
+            } else if name.contains("tdev"), readCelsius(from: serviceRef) != nil {
                 boardSensors.append(serviceRef)
             }
         }
@@ -756,15 +790,17 @@ final class ThermalSampler {
         }
     }
 
-    func sample(includeDetails: Bool = false) -> (celsius: Double?, details: ThermalDetails) {
+    func sample(includeDetails: Bool = false, advanceTick: Bool = true) -> (celsius: Double?, details: ThermalDetails) {
         if includeDetails {
             return sampleDetailed()
         }
         guard let primarySensor else { return (nil, cachedDetails) }
-        if cachedTemperature == nil || tickCount.isMultiple(of: Self.sampleStride) {
+        if cachedTemperature == nil || (advanceTick && tickCount.isMultiple(of: Self.sampleStride)) {
             cachedTemperature = readCelsius(from: primarySensor)
         }
-        tickCount &+= 1
+        if advanceTick {
+            tickCount &+= 1
+        }
         return (cachedTemperature, cachedDetails)
     }
 
@@ -841,17 +877,24 @@ struct NetworkCounters: Equatable, Sendable {
 final class NetworkSampler {
     private var previousCounters: NetworkCounters?
     private var previousInstant: ContinuousClock.Instant?
+    private var cachedRates: (uploadBytesPerSec: UInt64, downloadBytesPerSec: UInt64) = (0, 0)
 
     func sample(now: ContinuousClock.Instant = .now) -> (uploadBytesPerSec: UInt64, downloadBytesPerSec: UInt64) {
         let current = Self.readCounters()
-        defer {
+        guard let prevCounters = previousCounters, let prevInstant = previousInstant else {
             previousCounters = current
             previousInstant = now
+            return (0, 0)
         }
-        guard let previousCounters, let previousInstant else { return (0, 0) }
-        let elapsed = previousInstant.duration(to: now)
+        let elapsed = prevInstant.duration(to: now)
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18
-        return NetworkCounters.rates(from: previousCounters, to: current, elapsedSeconds: seconds)
+        guard seconds >= 0.25 else {
+            return cachedRates
+        }
+        previousCounters = current
+        previousInstant = now
+        cachedRates = NetworkCounters.rates(from: prevCounters, to: current, elapsedSeconds: seconds)
+        return cachedRates
     }
 
     static func isPhysicalInterfaceName(_ name: String) -> Bool {

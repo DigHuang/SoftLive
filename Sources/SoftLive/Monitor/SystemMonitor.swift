@@ -36,7 +36,16 @@ final class SystemMonitor {
         guard activeTab != tab else { return }
         activeTab = tab
         if isDetailActive {
+            let needsFreshCPUBaseline = tab == .cpu && processSampler.isCPUBaselineStale()
             poll(recordHistory: false)
+            if needsFreshCPUBaseline {
+                openRefreshTask?.cancel()
+                openRefreshTask = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard let self, !Task.isCancelled, self.isDetailActive, self.activeTab == .cpu else { return }
+                    self.poll(recordHistory: false)
+                }
+            }
         }
     }
 
@@ -120,7 +129,7 @@ final class SystemMonitor {
             : (topCPU: [], topMemory: [])
         let cpu = cpuSampler.sample(includeDetails: needCPUDetails, topProcesses: processes.topCPU)
         let memory = MemorySampler.sample(includeDetails: needRAMDetails, topProcesses: processes.topMemory)
-        let thermal = thermalSampler.sample(includeDetails: needTMPDetails)
+        let thermal = thermalSampler.sample(includeDetails: needTMPDetails, advanceTick: recordHistory)
         let network = networkSampler.sample()
 
         if recordHistory || cpuHistory.isEmpty {

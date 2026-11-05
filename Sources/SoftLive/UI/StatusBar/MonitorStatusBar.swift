@@ -202,12 +202,15 @@ final class MonitorStatusBar: NSObject {
         }
     }
 
-    private struct DisplayKey: Equatable {
+    struct DisplayKey: Equatable {
         let upText: String
         let downText: String
         let cpuBarSteps: Int
         let ramBarSteps: Int
         let tmpBarSteps: Int
+        let cpuHigh: Bool
+        let ramWarning: Bool
+        let tmpBand: Int
         let pressure: MemoryPressureLevel
 
         init(metrics: SystemMetrics) {
@@ -216,6 +219,10 @@ final class MonitorStatusBar: NSObject {
             cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
             ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
             tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
+            cpuHigh = metrics.cpuUsage >= 0.75
+            ramWarning = metrics.memoryUsage >= 0.88
+            let temp = metrics.temperatureCelsius ?? 0
+            tmpBand = temp >= 72 ? 2 : (temp >= 55 ? 1 : 0)
             pressure = metrics.memoryPressure
         }
     }
