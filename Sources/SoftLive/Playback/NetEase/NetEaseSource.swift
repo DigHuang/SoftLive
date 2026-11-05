@@ -221,7 +221,9 @@ final class NetEaseSource: PlayerSource {
 
     private func reported(_ report: NetEaseLastPlaying.Report) {
         Self.log.debug("page reports song \(report.songID, privacy: .public) at \(report.position, format: .fixed(precision: 0))s")
-        reload()
+        if currentPlay == nil || report.songID != currentPlay?.songID {
+            reload()
+        }
         calibrate(with: report)
     }
 

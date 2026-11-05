@@ -19,7 +19,7 @@ final class SystemMonitor {
     private var excludedPIDs: Set<pid_t> = []
     private var timer: Timer?
     private var observeTask: Task<Void, Never>?
-    private var isDetailActive = false
+    private(set) var isDetailActive = false
 
     init(preferences: Preferences) {
         observeTask = Task { [weak self] in

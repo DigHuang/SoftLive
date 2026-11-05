@@ -34,7 +34,7 @@ struct SystemMetrics: Equatable, Sendable {
     }
 
     static func formatTemperatureDetail(_ celsius: Double?) -> String {
-        guard let celsius else { return "--" }
+        guard let celsius else { return "-- °C" }
         return String(format: "%.1f °C", celsius)
     }
 
@@ -98,15 +98,12 @@ struct CPUDetails: Equatable, Sendable {
     var chipName: String = ""
     var userUsage: Double = 0
     var systemUsage: Double = 0
-    var idleUsage: Double = 1
     var gpuUsage: Double = 0
     var efficiencyCores: [Double] = []
     var performanceCores: [Double] = []
     var efficiencyUsage: Double = 0
     var performanceUsage: Double = 0
     var loadAverage1m: Double = 0
-    var loadAverage5m: Double = 0
-    var loadAverage15m: Double = 0
     var topProcesses: [ProcessMetric] = []
 }
 
@@ -117,9 +114,9 @@ enum MemoryPressureLevel: Int, Equatable, Sendable {
 
     var label: String {
         switch self {
-        case .normal: "正常"
-        case .warning: "偏高"
-        case .critical: "紧缺"
+        case .normal: "压力正常"
+        case .warning: "压力偏高"
+        case .critical: "压力吃紧"
         }
     }
 }
@@ -130,32 +127,19 @@ struct MemoryDetails: Equatable, Sendable {
     var appBytes: UInt64 = 0
     var wiredBytes: UInt64 = 0
     var compressedBytes: UInt64 = 0
-    var cachedBytes: UInt64 = 0
     var freeBytes: UInt64 = 0
     var swapUsedBytes: UInt64 = 0
-    var swapTotalBytes: UInt64 = 0
     var pressure: MemoryPressureLevel = .normal
     var topProcesses: [ProcessMetric] = []
 }
 
-struct ThermalSensorReading: Equatable, Sendable, Identifiable {
-    let id: String
-    let label: String
-    let celsius: Double
-}
-
 struct ThermalDetails: Equatable, Sendable {
-    var averageDieCelsius: Double?
     var maxDieCelsius: Double?
     var minDieCelsius: Double?
     var nandCelsius: Double?
     var batteryCelsius: Double?
     var boardAverageCelsius: Double?
     var systemPowerWatts: Double?
-    var dcInPowerWatts: Double?
     var fanRPM: Int?
-    var fanMinRPM: Int?
     var fanMaxRPM: Int?
-    var dieSensors: [ThermalSensorReading] = []
-    var thermalStateLabel: String = "正常"
 }

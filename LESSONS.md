@@ -67,7 +67,11 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 出现 2 次。
 
 **隐藏 `NSPanel` 或 `contentView` 不会自动停止 `NSHostingView` 的观察和 `TimelineView` 调度。**
-- 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；需在视图层用 `!isHiddenOrHasHiddenAncestor` 和可见状态显式短路。
+- 默认关闭的桌面组件虽然被 `orderOut` 且 `contentView.isHidden = true`，但 `NSHostingView` 仍保持挂载，每句歌词切换时后台仍在做 CoreText 位图光栅化和 Core Animation 构建，且进度条 `TimelineView` 仍在每秒唤醒；同样地，`MonitorPopoverPanel` 关闭后若未在 `MonitorPopoverView.body` 顶层按 `monitor.isDetailActive` 短路，每 2 秒更新 `monitor.metrics` 都会在后台触发整棵弹窗 SwiftUI 视图树与 `.glassEffect` 的重算。需在面板收起时设置 `contentView.isHidden = true`，并在视图顶层根据可见/激活状态直接返回空占位视图显式短路。
+- 出现 2 次。
+
+**高频进度事件或拖动校对路径上，不能顺带执行全量磁盘/SQLite 扫描或全字段跨进程 IPC。**
+- `NetEaseSource.reported(_:)` 每 1.8 秒收到一条同曲目的 `lastPlaying` 进度汇报时都会无条件调用 `reload()`，触发主线程同步打开读取 `sqlite_storage.sqlite3` 并遍历 `online_play_cache` 目录；`AppleMusicSource` 每 2 秒校对拖动时也调用完整 `refresh()` 发起 8 次同步 ScriptingBridge AppleEvent IPC。播放期间只需在曲目变化时 `reload()`（并对缓存目录按 `contentModificationDateKey` 做内存缓存），Apple Music 拖动校对只需单次读取 `playerPosition`。
 - 出现 1 次。
 
 **前后对比必须在相同条件下测。**

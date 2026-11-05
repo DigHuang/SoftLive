@@ -40,39 +40,43 @@ private struct DesktopWidgetView: View {
     let preferences: Preferences
 
     var body: some View {
-        let playback = model.playback
-        let isExpanded = playback != nil
-        let selected = preferences.preferredPlayer
-        let recent = model.recentTracks[selected]
+        if !preferences.showsDesktopWidget {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            let playback = model.playback
+            let isExpanded = playback != nil
+            let selected = preferences.preferredPlayer
+            let recent = model.recentTracks[selected]
 
-        VStack(alignment: .leading, spacing: 0) {
-            header(playback: playback, selected: selected, recent: recent)
-                .frame(height: 56)
+            VStack(alignment: .leading, spacing: 0) {
+                header(playback: playback, selected: selected, recent: recent)
+                    .frame(height: 56)
 
-            if playback != nil {
-                lyrics
-                    .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
-                    .padding(.top, 10)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-        }
-        .padding(Self.innerPadding)
-        .frame(width: Self.cardWidth, height: isExpanded ? Self.expandedHeight : Self.compactHeight, alignment: .top)
-        .clipped()
-        .background {
-            Color.clear
-                .glassEffect(.regular, in: .rect(cornerRadius: 24))
-                .contentShape(.rect(cornerRadius: 24))
-                .onTapGesture(count: 2) {
-                    if playback != nil { model.nextTrack() }
+                if playback != nil {
+                    lyrics
+                        .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
+                        .padding(.top, 10)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
-        }
-        .padding(Self.margin)
-        .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
-        .animation(.spring(duration: 0.36, bounce: 0.08), value: isExpanded)
-        .onChange(of: model.playback?.track.source) { _, source in
-            if let source { preferences.preferredPlayer = source }
+            }
+            .padding(Self.innerPadding)
+            .frame(width: Self.cardWidth, height: isExpanded ? Self.expandedHeight : Self.compactHeight, alignment: .top)
+            .clipped()
+            .background {
+                Color.clear
+                    .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                    .contentShape(.rect(cornerRadius: 24))
+                    .onTapGesture(count: 2) {
+                        if playback != nil { model.nextTrack() }
+                    }
+            }
+            .padding(Self.margin)
+            .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
+            .animation(.spring(duration: 0.36, bounce: 0.08), value: isExpanded)
+            .onChange(of: model.playback?.track.source) { _, source in
+                if let source { preferences.preferredPlayer = source }
+            }
         }
     }
 

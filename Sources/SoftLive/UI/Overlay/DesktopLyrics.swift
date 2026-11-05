@@ -44,6 +44,7 @@ final class LyricsInteraction {
     func attach(to panel: NSPanel) {
         self.panel = panel
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp]) { [weak self] event in
+            guard let self, let panel = self.panel, panel.isVisible else { return }
             let command = event.modifierFlags.contains(.command)
             let buttonsPressed = event.type != .leftMouseUp && NSEvent.pressedMouseButtons != 0
             Task { @MainActor [weak self] in self?.reevaluate(command: command, buttonsPressed: buttonsPressed) }

@@ -12,8 +12,16 @@ import Testing
 
         #expect(SystemMetrics.formatTemperature(nil) == "--°")
         #expect(SystemMetrics.formatTemperature(41.2) == "41°")
-        #expect(SystemMetrics.formatTemperatureDetail(nil) == "--")
+        #expect(SystemMetrics.formatTemperatureDetail(nil) == "-- °C")
         #expect(SystemMetrics.formatTemperatureDetail(41.24) == "41.2 °C")
+
+        #expect(SystemMetrics.formatWatts(nil) == "-- W")
+        #expect(SystemMetrics.formatWatts(-1) == "-- W")
+        #expect(SystemMetrics.formatWatts(18.52) == "18.5 W")
+
+        #expect(MemoryPressureLevel.normal.label == "压力正常")
+        #expect(MemoryPressureLevel.warning.label == "压力偏高")
+        #expect(MemoryPressureLevel.critical.label == "压力吃紧")
 
         #expect(SystemMetrics.thermalProgress(nil) == 0)
         #expect(SystemMetrics.thermalProgress(0) == 0)
@@ -43,6 +51,22 @@ import Testing
         #expect(!image.isTemplate)
         #expect(image.size == NSSize(width: 52, height: 22))
         #expect(image.tiffRepresentation != nil)
+    }
+
+    @Test @MainActor func togglesDetailActiveModeCleanly() {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+        #expect(!monitor.isDetailActive)
+
+        monitor.setDetailActive(true)
+        #expect(monitor.isDetailActive)
+
+        monitor.setDetailActive(false)
+        #expect(!monitor.isDetailActive)
     }
 }
 

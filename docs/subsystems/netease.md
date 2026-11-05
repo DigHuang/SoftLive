@@ -17,8 +17,8 @@
 
 ## 运行路径
 
-1. **判断当前在播哪一次**：缓存目录、数据库或 LevelDB 有变化时调用 `reload()`，由 `NetEasePlay.latest` 选出当前这次播放：
-   - 取缓存里创建时间最新的那首歌。
+1. **判断当前在播哪一次**：缓存目录或数据库变化，或 LevelDB 报告了新曲目（`currentPlay == nil || report.songID != currentPlay?.songID`）时调用 `reload()`，由 `NetEasePlay.latest` 选出当前这次播放（同一曲目每 1.8 秒的 `lastPlaying` 进度汇报直接进入第 4 步校准，不重复扫描 SQLite 与缓存目录）：
+   - 取缓存里创建时间最新的那首歌（`NetEasePlayCache.starts()` 按目录 `contentModificationDateKey` 缓存结果）。
    - 历史表最新一行如果比缓存里同一首歌的开始时间晚、但不超过这首歌的时长，视为同一次播放，开始时间以缓存为准；否则按历史表的时间作为一次新的播放。
    - LevelDB 报告的歌（`lastPlaying` 或 `playingInfo` 切歌），只有缓存和历史都没看到、且推算的开始时间比当前歌晚 3 秒以上时才采用（`reportLag`）。
      因为换歌后网页可能还会短暂报告上一首。

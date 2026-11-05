@@ -22,7 +22,7 @@
 
 - **读取**：[`AppleMusicSource`](../../Sources/SoftLive/Playback/AppleMusic/AppleMusicSource.swift) 通过 ScriptingBridge 读取 `playerState`、`currentTrack`、`playerPosition`。
 - **事件**：由 `com.apple.Music.playerInfo` 分布式通知触发。
-- **拖动**：Music 拖动进度时不发通知，所以播放期间每 2 秒校对一次位置，偏差超过 0.4 秒视为拖动（`seekThreshold`、`seekCheckInterval`）。
+- **拖动**：Music 拖动进度时不发通知，所以播放期间每 2 秒（`tolerance = 0.3s`）由 `checkSeekPosition()` 仅查询单次 `playerPosition`（避免重复查询完整曲目元数据），偏差超过 0.4 秒视为拖动（`seekThreshold`、`seekCheckInterval`）。
 - **封面**：从 `currentTrack.artworks` 读取。
 
 ## 约束与失败行为

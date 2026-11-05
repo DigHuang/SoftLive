@@ -26,13 +26,16 @@ final class AppleMusicSource: PlayerSource {
     private var music: (pid: pid_t, app: SBApplication)?
     private var runningObserver: RunningAppObserver?
     private var seekCheckTimer: Timer?
+    private var playerInfoObserver: (any NSObjectProtocol)?
 
     func start() {
         runningObserver = RunningAppObserver(bundleID: Self.bundleID) { [weak self] _ in self?.refresh() }
-        DistributedNotificationCenter.default().addObserver(
-            forName: .init("com.apple.Music.playerInfo"), object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+        if playerInfoObserver == nil {
+            playerInfoObserver = DistributedNotificationCenter.default().addObserver(
+                forName: .init("com.apple.Music.playerInfo"), object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            }
         }
         refresh()
     }
@@ -74,10 +77,21 @@ final class AppleMusicSource: PlayerSource {
     func close() {
         seekCheckTimer?.invalidate()
         seekCheckTimer = nil
+        if let observer = playerInfoObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+            playerInfoObserver = nil
+        }
+        runningObserver = nil
         music = nil
         state = nil
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID) {
             app.terminate()
+        }
+    }
+
+    isolated deinit {
+        if let observer = playerInfoObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
         }
     }
 
@@ -117,7 +131,31 @@ final class AppleMusicSource: PlayerSource {
         let shouldCheck = state?.isPlaying == true
         guard shouldCheck != (seekCheckTimer != nil) else { return }
         seekCheckTimer?.invalidate()
-        seekCheckTimer = shouldCheck ? Timer.onMain(after: Self.seekCheckInterval, repeats: true) { [weak self] in self?.refresh() } : nil
+        seekCheckTimer = shouldCheck ? Timer.onMain(after: Self.seekCheckInterval, repeats: true, tolerance: 0.3) { [weak self] in
+            self?.checkSeekPosition()
+        } : nil
+    }
+
+    private func checkSeekPosition() {
+        guard let music = runningMusic(), var current = state, current.isPlaying else {
+            refresh()
+            return
+        }
+        // Lightweight check: only read playerPosition (1 AppleEvent IPC instead of 8)
+        guard let position = (music.value(forKey: "playerPosition") as? NSNumber)?.doubleValue else {
+            refresh()
+            return
+        }
+        let diff = abs(position - current.position())
+        if diff >= Self.seekThreshold {
+            let inRange = position >= 0 && (current.track.duration <= 0 || position <= current.track.duration + 2)
+            if inRange {
+                current.seek(to: position, at: .now)
+                state = current
+            } else {
+                refresh()
+            }
+        }
     }
 
     private func readState(_ music: SBApplication) -> PlaybackState? {

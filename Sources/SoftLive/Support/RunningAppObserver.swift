@@ -21,6 +21,13 @@ final class RunningAppObserver {
         }
     }
 
+    isolated deinit {
+        let center = NSWorkspace.shared.notificationCenter
+        for token in tokens {
+            center.removeObserver(token)
+        }
+    }
+
     var application: NSRunningApplication? {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
     }
