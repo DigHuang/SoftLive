@@ -14,7 +14,7 @@
 | 非激活悬浮面板（`.nonactivatingPanel`）的点击交互必须支持首击直达且不触发应用激活。 | 状态栏弹窗或桌面悬浮窗不得在左键点击时调用 `NSApp.activate()`（在刘海屏上切换前台菜单栏会导致状态栏图标跨刘海跳变）；宿主 `NSHostingView` 必须重写 `acceptsFirstMouse(for:) -> true`，且面板内的 SwiftUI 切换/按钮优先使用 `.contentShape(Rectangle()).onTapGesture`（避免 `NSApp.isActive == false` 时 `Button` 忽略首击） |
 | 用 Swift 6.2 原生特性减少样板代码。 | `Package.swift` 已开启 `.defaultIsolation(MainActor.self)`，不在类型和普通方法上重复标 `@MainActor`；需要析构清理时用 `isolated deinit`，不加 `nonisolated(unsafe)`；正则统一用 `static let` 原生 `Regex` 字面量，不用 `NSRegularExpression` 字符串桥接 |
 | 不绕过系统权限。 | 不借用系统二进制的授权（例如用 `/usr/bin/perl` 加载 `mediaremote-adapter` 读 MediaRemote），不碰沙盒、TCC、账号或版权保护。读取一个 App 对**用户自己本地数据**做的混淆（例如网易云的 `lastPlaying`）可以，但只读 |
-| 其他 App 的数据只读，其他 App 的行为以实测为准。 | 不写网易云的数据库、缓存、LevelDB。判断一个数据源何时写入、有多可靠，要有本机实测数据，并写进对应子系统页面 |
+| 其他 App 的数据只读，其他 App 或外部数据格式的行为以本机真实样本实测为准，不能凭字面含义假设字段承诺。 | 不写网易云的数据库、缓存、LevelDB。在一个数据源或歌词/日志字段上建功能前，必须先用本机真实样本核对（例如：`historyTracks` 后台漏写/晚写、`IsRunningOutput` 暂停后恒为 `1`、网易云 LRC 空时间标签常在开唱后 `0.3–0.7s` 作为分段空行打点而非句尾、YRC 行头 `durationMs` 常跨间奏拉通到下一句起点），并将实测结论写进对应子系统页面 |
 | 和其他 App 交互不能把它启动起来。 | 绑定到正在运行的进程（例如按 PID 创建 `SBApplication`），不要用会自动启动目标的接口 |
 | 保留与改动无关的注释和文档注释。 | 代码注释用英文，文档用中文 |
 

@@ -16,6 +16,7 @@ final class KaraokeLayerView: NSView {
     private struct RenderKey: Equatable {
         let text: String
         let wordTexts: [String]
+        let isInterlude: Bool
         let size: CGSize
         let backingScale: CGFloat
         let fontSize: CGFloat
@@ -28,6 +29,7 @@ final class KaraokeLayerView: NSView {
     private static let unsungOpacity: Float = 0.38
     private static let karaokeKey = "karaoke"
     private static let entranceKey = "lineEntrance"
+    private static let breathKey = "interludeBreath"
 
     private let sungClipLayer = CALayer()
     private let sungImageLayer = CALayer()
@@ -37,6 +39,7 @@ final class KaraokeLayerView: NSView {
     private var line = LyricLine(time: 0, text: "")
     private var playback: PlaybackState?
     private var offset: TimeInterval = 0
+    private var interlude: Interlude?
     private var fontSize: CGFloat = 19
     private var weight: NSFont.Weight = .bold
     private var color: NSColor = .labelColor
@@ -45,7 +48,16 @@ final class KaraokeLayerView: NSView {
 
     private var renderedKey: RenderKey?
     private var lastLineTime: TimeInterval?
+    private var lastInterlude: Interlude?
     private var wordRanges: [WordRange] = []
+
+    static func interludeWords(for interlude: Interlude) -> [LyricWord] {
+        let span = max(0.3, interlude.end - interlude.start)
+        let step = span / 3
+        return (0..<3).map { index in
+            LyricWord(start: interlude.start + Double(index) * step, duration: step, text: "•")
+        }
+    }
 
     static func lineHeight(for fontSize: CGFloat) -> CGFloat {
         ceil(fontSize * 1.35)
@@ -86,16 +98,18 @@ final class KaraokeLayerView: NSView {
         line: LyricLine,
         playback: PlaybackState?,
         offset: TimeInterval,
+        interlude: Interlude? = nil,
         fontSize: CGFloat,
         weight: NSFont.Weight,
         color: NSColor,
         centered: Bool,
         hasShadow: Bool
     ) {
-        let timingChanged = self.playback != playback || self.offset != offset
+        let timingChanged = self.playback != playback || self.offset != offset || self.interlude != interlude
         self.line = line
         self.playback = playback
         self.offset = offset
+        self.interlude = interlude
         self.fontSize = fontSize
         self.weight = weight
         self.color = color
@@ -136,10 +150,12 @@ final class KaraokeLayerView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             resolvedColor = color.usingColorSpace(.deviceRGB) ?? color
         }
-        let words = line.words ?? []
+        let isInterlude = interlude != nil
+        let words = isInterlude ? [] : (line.words ?? [])
         let key = RenderKey(
-            text: line.text,
+            text: isInterlude ? "" : line.text,
             wordTexts: words.map(\.text),
+            isInterlude: isInterlude,
             size: bounds.size,
             backingScale: scale,
             fontSize: fontSize,
@@ -148,8 +164,11 @@ final class KaraokeLayerView: NSView {
             centered: centered,
             hasShadow: hasShadow
         )
-        let lineChanged = lastLineTime != nil && (lastLineTime != line.time || renderedKey?.text != line.text)
+        let lineChanged = (lastLineTime != nil || lastInterlude != nil) && (
+            lastInterlude != interlude || (!isInterlude && (lastLineTime != line.time || renderedKey?.text != line.text))
+        )
         lastLineTime = line.time
+        lastInterlude = interlude
 
         if key != renderedKey {
             renderedKey = key
@@ -180,6 +199,10 @@ final class KaraokeLayerView: NSView {
     }
 
     private func renderLine(key: RenderKey) {
+        if key.isInterlude {
+            renderInterlude(key: key)
+            return
+        }
         guard !key.text.isEmpty else {
             wordRanges = []
             CATransaction.begin()
@@ -303,12 +326,102 @@ final class KaraokeLayerView: NSView {
         let unsungImage = key.hasShadow
             ? rasterize(fillColor: NSColor(white: 1.0, alpha: 0.56), tightShadowAlpha: 0.52, ambientShadowAlpha: 0.36)
             : sungImage
+        applyRasterizedImages(sungImage: sungImage, unsungImage: unsungImage, key: key)
+    }
 
+    private func renderInterlude(key: RenderKey) {
+        let width = key.size.width
+        let height = key.size.height
+        let dotSize = round(max(6, key.fontSize * 0.36))
+        let gap = round(max(8, key.fontSize * 0.55))
+        let totalWidth = dotSize * 3 + gap * 2
+        let originX = key.centered ? floor((width - totalWidth) / 2) : 2
+        let originY = floor((height - dotSize) / 2)
+        let pad: CGFloat = key.hasShadow ? 4 : 1
+
+        let dotsPath = CGMutablePath()
+        var ranges: [WordRange] = []
+        ranges.reserveCapacity(3)
+        for index in 0..<3 {
+            let x = originX + CGFloat(index) * (dotSize + gap)
+            let rect = CGRect(x: x, y: originY, width: dotSize, height: dotSize)
+            dotsPath.addEllipse(in: rect)
+            let startX = index == 0 ? max(0, rect.minX - pad) : rect.minX - pad
+            let endX = index == 2 ? min(width, rect.maxX + pad) : rect.maxX + pad
+            ranges.append(WordRange(startX: startX, endX: max(startX, endX)))
+        }
+        wordRanges = ranges
+
+        let pixelW = max(1, Int(ceil(width * key.backingScale)))
+        let pixelH = max(1, Int(ceil(height * key.backingScale)))
+
+        func rasterizeDots(fillColor: NSColor, tightShadowAlpha: CGFloat, ambientShadowAlpha: CGFloat) -> CGImage? {
+            guard let ctx = CGContext(
+                data: nil,
+                width: pixelW,
+                height: pixelH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            ) else { return nil }
+
+            ctx.scaleBy(x: key.backingScale, y: key.backingScale)
+            if key.hasShadow {
+                let fillAlpha = fillColor.alphaComponent
+                let opaqueColor = fillColor.withAlphaComponent(1).cgColor
+
+                ctx.saveGState()
+                ctx.setShadow(
+                    offset: CGSize(width: 0, height: -2),
+                    blur: 8,
+                    color: NSColor.black.withAlphaComponent(ambientShadowAlpha).cgColor
+                )
+                ctx.setFillColor(opaqueColor)
+                ctx.addPath(dotsPath)
+                ctx.fillPath()
+                ctx.restoreGState()
+
+                ctx.saveGState()
+                ctx.setShadow(
+                    offset: CGSize(width: 0, height: -0.8),
+                    blur: 2,
+                    color: NSColor.black.withAlphaComponent(tightShadowAlpha).cgColor
+                )
+                ctx.setFillColor(opaqueColor)
+                ctx.addPath(dotsPath)
+                ctx.fillPath()
+                ctx.restoreGState()
+
+                if fillAlpha < 1 {
+                    ctx.saveGState()
+                    ctx.setBlendMode(.destinationOut)
+                    ctx.setFillColor(NSColor.black.withAlphaComponent(1 - fillAlpha).cgColor)
+                    ctx.addPath(dotsPath)
+                    ctx.fillPath()
+                    ctx.restoreGState()
+                }
+            } else {
+                ctx.setFillColor(fillColor.cgColor)
+                ctx.addPath(dotsPath)
+                ctx.fillPath()
+            }
+            return ctx.makeImage()
+        }
+
+        let sungImage = rasterizeDots(fillColor: key.color, tightShadowAlpha: 0.62, ambientShadowAlpha: 0.45)
+        let unsungImage = key.hasShadow
+            ? rasterizeDots(fillColor: NSColor(white: 1.0, alpha: 0.56), tightShadowAlpha: 0.52, ambientShadowAlpha: 0.36)
+            : sungImage
+        applyRasterizedImages(sungImage: sungImage, unsungImage: unsungImage, key: key)
+    }
+
+    private func applyRasterizedImages(sungImage: CGImage?, unsungImage: CGImage?, key: RenderKey) {
         let fullRect = CGRect(origin: .zero, size: key.size)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         sungClipLayer.position = .zero
-        unsungClipLayer.position = CGPoint(x: width, y: 0)
+        unsungClipLayer.position = CGPoint(x: key.size.width, y: 0)
         sungImageLayer.frame = fullRect
         unsungImageLayer.frame = fullRect
         sungImageLayer.contents = sungImage
@@ -327,7 +440,23 @@ final class KaraokeLayerView: NSView {
         sungClipLayer.removeAnimation(forKey: Self.karaokeKey)
         unsungClipLayer.removeAnimation(forKey: Self.karaokeKey)
 
-        guard let words = line.words, !words.isEmpty, words.count == wordRanges.count, let last = words.last else {
+        if interlude != nil, playback?.isPlaying == true {
+            if layer?.animation(forKey: Self.breathKey) == nil {
+                let breath = CABasicAnimation(keyPath: "opacity")
+                breath.fromValue = 0.68
+                breath.toValue = 1.0
+                breath.duration = 1.1
+                breath.autoreverses = true
+                breath.repeatCount = .infinity
+                breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                layer?.add(breath, forKey: Self.breathKey)
+            }
+        } else {
+            layer?.removeAnimation(forKey: Self.breathKey)
+        }
+
+        let activeWords = interlude.map(Self.interludeWords(for:)) ?? line.words
+        guard let words = activeWords, !words.isEmpty, words.count == wordRanges.count, let last = words.last else {
             setClipWidth(width)
             return
         }

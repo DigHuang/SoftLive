@@ -168,4 +168,48 @@ struct KaraokeLayerViewTests {
         interaction.reevaluate(command: false, buttonsPressed: false, mouseLocation: outsidePoint)
         #expect(interaction.isAwake == false)
     }
+
+    @Test func rendersThreeDotInterludeAndAdvancesAcrossThirds() throws {
+        let interlude = Interlude(start: 10, end: 25)
+        let interludeWords = KaraokeLayerView.interludeWords(for: interlude)
+        let track = Track(id: "1", title: "Song", artist: "Artist", album: "", duration: 180, source: .netEase)
+        let playing = PlaybackState(track: track, isPlaying: true, position: 10, at: .now)
+
+        let view = KaraokeLayerView(frame: NSRect(x: 0, y: 0, width: 300, height: 32))
+        view.configure(
+            line: LyricLine(time: 0, text: ""),
+            playback: playing,
+            offset: 0,
+            interlude: interlude,
+            fontSize: 24,
+            weight: .semibold,
+            color: .white,
+            centered: true,
+            hasShadow: true
+        )
+
+        #expect(view.layer?.animation(forKey: "interludeBreath") != nil)
+        let dot1Mid = view.splitX(at: 12.5, words: interludeWords)
+        let dot2Mid = view.splitX(at: 17.5, words: interludeWords)
+        let dot3Mid = view.splitX(at: 22.5, words: interludeWords)
+        let done = view.splitX(at: 25.0, words: interludeWords)
+        #expect(dot1Mid < dot2Mid)
+        #expect(dot2Mid < dot3Mid)
+        #expect(dot3Mid < done)
+        #expect(done == 300)
+
+        // Exiting the interlude removes the breathing animation.
+        view.configure(
+            line: LyricLine(time: 25, text: "下一句"),
+            playback: playing,
+            offset: 0,
+            interlude: nil,
+            fontSize: 24,
+            weight: .semibold,
+            color: .white,
+            centered: true,
+            hasShadow: true
+        )
+        #expect(view.layer?.animation(forKey: "interludeBreath") == nil)
+    }
 }

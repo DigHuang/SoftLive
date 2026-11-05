@@ -9,13 +9,6 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 
 ## 数据与判断
 
-**在一个数据源上建功能之前，先用独立的事实核对它的承诺。**
-- 第一版假设网易云的 `historyTracks` 会在每首歌开始时写入，并用它判断换歌和开始时间。
-  用户反馈后台播放时不同步，才用 `playingCount`（每次播放结束时的记录）和缓存文件的创建时间核对：15 次播放里 5 次没有记录，2 次晚写 124 秒和 285 秒。
-- 后来换成缓存文件之前，先核对了它的创建时间与真实开始时间（相差 ≤ 2 秒）。
-- 同样曾假设网易云暂停时 Core Audio 的 `kAudioProcessPropertyIsRunningOutput` 会变为 `0`，未实际测量就上线；用户反馈暂停不同步后核查 `coreaudiod` 日志才发现网易云暂停后会保持音频流开启并输出静音长达 20 小时（`IsRunningOutput` 恒为 `1`），且新歌 `.info` 创建早于音频流启动 150 ms 会把状态卡在暂停。核对 LevelDB `.log` 实测数据后改为读取 `playingInfo.playingState`（`1` = 暂停，`2` = 播放）并辅以 `lastPlaying` 4 秒静默超时。
-- 出现 2 次。
-
 **直接扫描二进制日志文件或调用内核 IOKit 结构体接口时，必须核对底层容器的分块边界与 C 结构体字节对齐。**
 - LevelDB 的 `.log` 文件按 32 KiB（`32768` 字节）分块，跨块记录会在 `offset % 32768 == 0` 处插入 7 字节的块续写头（`crc32 + length + type`）。`lastPlaying` 只有 265 字节很少跨块，但 `playingInfo` 约 13 KB，约 40% 的记录会跨 32 KiB 边界；未跳过 7 字节块头会导致 Base64 解码失败并漏掉状态变化。
 - `AppleSMC` 内核驱动的 `IOConnectCallStructMethod(selector: 2)` 要求输入/输出 `SMCKeyData_t` 精确为 80 字节。在 C 头文件中，嵌套子结构体 `keyInfo_t`（`UInt32 + UInt32 + UInt8 = 9` 字节）因 4 字节对齐自动补齐到 12 字节；而在 Swift 中直接把字段扁平展开后，紧跟其后的 `result: UInt8` 会填进原本的对齐空隙，导致整个结构体变成 76 字节并报 `kIOReturnBadArgument`。必须在 `keyInfo` 字段后显式补齐 3 字节填充并用 `MemoryLayout<SMCKeyData>.size == 80` 验证。
