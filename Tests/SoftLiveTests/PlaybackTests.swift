@@ -365,6 +365,46 @@ struct NetEaseLastPlayingTests {
         #expect(tracker.latest?.position == 42)
         #expect(events.last?.0 == true)
     }
+
+    @Test func readsTailOfOldLogBeforeSwitchingToNewestLog() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appending(path: "SoftLiveLogRotation-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let oldLog = tempDir.appending(path: "000001.log")
+        let newLog = tempDir.appending(path: "000002.log")
+
+        let initialChunk = logEntry(#"{"current":10,"resourceId":"1853884220"}"#)
+        try initialChunk.write(to: oldLog)
+
+        let tracker = NetEaseLastPlaying(directory: tempDir)
+        defer { tracker.stopWatching() }
+        tracker.followNewestLog()
+        #expect(tracker.latest?.songID == 1_853_884_220)
+        #expect(tracker.latest?.position == 10)
+        #expect(tracker.latestTrack == nil)
+
+        // Append a `playingInfo` record to the tail of `000001.log`, then rotate to `000002.log` with a newer mtime.
+        let tailInfo = logEntry(
+            key: "playingInfo",
+            #"{"playingState":1,"resourceTrackId":"1853884220","curTrack":{"id":"1853884220","name":"旧文件末尾曲目","duration":184000,"artists":[{"name":"A"}]}}"#
+        )
+        let handle = try FileHandle(forWritingTo: oldLog)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: tailInfo)
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: Date.now.addingTimeInterval(-1)], ofItemAtPath: oldLog.path)
+
+        let rotatedChunk = logEntry(#"{"current":25,"resourceId":"1853884220"}"#)
+        try rotatedChunk.write(to: newLog)
+        try FileManager.default.setAttributes([.modificationDate: Date.now], ofItemAtPath: newLog.path)
+
+        tracker.followNewestLog()
+        #expect(tracker.latestTrack?.title == "旧文件末尾曲目")
+        #expect(tracker.isPlaying == false)
+        #expect(tracker.latest?.position == 25)
+    }
 }
 
 struct NetEaseSongTests {

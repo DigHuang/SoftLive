@@ -56,6 +56,22 @@ import Testing
         #expect(!image.isTemplate)
         #expect(image.size == NSSize(width: 52, height: 22))
         #expect(image.tiffRepresentation != nil)
+
+        // Crossing color thresholds within the same integer bar-height step must produce distinct DisplayKeys.
+        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.74))
+        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.76))
+        #expect(cpuBelow.cpuBarSteps == cpuAbove.cpuBarSteps)
+        #expect(cpuBelow != cpuAbove)
+
+        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.87))
+        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.89))
+        #expect(ramBelow.ramBarSteps == ramAbove.ramBarSteps)
+        #expect(ramBelow != ramAbove)
+
+        let tmpBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 54.0))
+        let tmpAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 55.5))
+        #expect(tmpBelow.tmpBarSteps == tmpAbove.tmpBarSteps)
+        #expect(tmpBelow != tmpAbove)
     }
 
     @Test @MainActor func togglesDetailActiveModeCleanly() {
@@ -145,5 +161,34 @@ import Testing
         let resetRates = NetworkCounters.rates(from: curr, to: reset, elapsedSeconds: 1.0)
         #expect(resetRates.downloadBytesPerSec == 0)
         #expect(resetRates.uploadBytesPerSec == 0)
+    }
+
+    @Test func processSamplerDetectsStaleBaselineAndPreservesCacheAcrossShortPolls() {
+        let sampler = ProcessSampler()
+        let t0 = ContinuousClock.Instant.now
+        #expect(sampler.isCPUBaselineStale(at: t0))
+
+        sampler.captureBaseline(now: t0)
+        #expect(!sampler.isCPUBaselineStale(at: t0.advanced(by: .seconds(2))))
+        #expect(sampler.isCPUBaselineStale(at: t0.advanced(by: .seconds(4))))
+
+        let first = sampler.sample(
+            now: t0.advanced(by: .milliseconds(200)),
+            totalMemoryBytes: 16 * 1_073_741_824,
+            limit: 5,
+            needCPU: true,
+            needMemory: true
+        )
+        #expect(!first.topCPU.isEmpty)
+
+        // An immediate out-of-band poll (< 50 ms later) must keep the previous cached list and baseline.
+        let immediate = sampler.sample(
+            now: t0.advanced(by: .milliseconds(210)),
+            totalMemoryBytes: 16 * 1_073_741_824,
+            limit: 5,
+            needCPU: true,
+            needMemory: false
+        )
+        #expect(immediate.topCPU == first.topCPU)
     }
 }

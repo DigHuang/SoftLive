@@ -77,11 +77,6 @@ final class AppleMusicSource: PlayerSource {
     func close() {
         seekCheckTimer?.invalidate()
         seekCheckTimer = nil
-        if let observer = playerInfoObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-            playerInfoObserver = nil
-        }
-        runningObserver = nil
         music = nil
         state = nil
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID) {

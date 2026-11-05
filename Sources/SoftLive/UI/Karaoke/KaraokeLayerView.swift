@@ -251,6 +251,12 @@ final class KaraokeLayerView: NSView {
             ]))
 
             if key.hasShadow {
+                let fillAlpha = fillColor.alphaComponent
+                let opaqueLine = fillAlpha < 1 ? CTLineCreateWithAttributedString(NSAttributedString(string: key.text, attributes: [
+                    .font: font,
+                    .foregroundColor: fillColor.withAlphaComponent(1)
+                ])) : drawLine
+
                 // Soft ambient shadow pass for depth.
                 ctx.saveGState()
                 ctx.setShadow(
@@ -259,10 +265,11 @@ final class KaraokeLayerView: NSView {
                     color: NSColor.black.withAlphaComponent(ambientShadowAlpha).cgColor
                 )
                 ctx.textPosition = .zero
-                CTLineDraw(drawLine, ctx)
+                CTLineDraw(opaqueLine, ctx)
                 ctx.restoreGState()
 
                 // Crisp contact shadow pass for edge legibility on light backgrounds.
+                // Drawing with opaque fill overwrites the contact shadow inside the glyph interior.
                 ctx.saveGState()
                 ctx.setShadow(
                     offset: CGSize(width: 0, height: -0.8),
@@ -270,8 +277,21 @@ final class KaraokeLayerView: NSView {
                     color: NSColor.black.withAlphaComponent(tightShadowAlpha).cgColor
                 )
                 ctx.textPosition = .zero
-                CTLineDraw(drawLine, ctx)
+                CTLineDraw(opaqueLine, ctx)
                 ctx.restoreGState()
+
+                // Attenuate only the glyph interior to `fillAlpha` while keeping outer shadows intact.
+                if fillAlpha < 1 {
+                    let maskLine = CTLineCreateWithAttributedString(NSAttributedString(string: key.text, attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.black.withAlphaComponent(1 - fillAlpha)
+                    ]))
+                    ctx.saveGState()
+                    ctx.setBlendMode(.destinationOut)
+                    ctx.textPosition = .zero
+                    CTLineDraw(maskLine, ctx)
+                    ctx.restoreGState()
+                }
             } else {
                 ctx.textPosition = .zero
                 CTLineDraw(drawLine, ctx)
