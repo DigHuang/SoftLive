@@ -75,22 +75,19 @@ final class CPUSampler {
             let eAvg = eCores.isEmpty ? 0 : eCores.reduce(0, +) / Double(eCores.count)
             let pAvg = pCores.isEmpty ? 0 : pCores.reduce(0, +) / Double(pCores.count)
 
-            var loads = [Double](repeating: 0, count: 3)
-            getloadavg(&loads, 3)
+            var loads = [Double](repeating: 0, count: 1)
+            getloadavg(&loads, 1)
 
             cachedDetails = CPUDetails(
                 chipName: chipName,
                 userUsage: split.user,
                 systemUsage: split.system,
-                idleUsage: split.idle,
                 gpuUsage: GPUSampler.sampleUtilization(),
                 efficiencyCores: eCores,
                 performanceCores: pCores,
                 efficiencyUsage: eAvg,
                 performanceUsage: pAvg,
                 loadAverage1m: loads[0],
-                loadAverage5m: loads[1],
-                loadAverage15m: loads[2],
                 topProcesses: topProcesses
             )
         }
@@ -503,7 +500,6 @@ enum MemorySampler {
         let appBytes = appPages * pageSize
         let wiredBytes = UInt64(stats.wire_count) * pageSize
         let compressedBytes = UInt64(stats.compressor_page_count) * pageSize
-        let cachedBytes = UInt64(stats.external_page_count + stats.purgeable_count) * pageSize
         let freeBytes = total > used ? (total - used) : 0
 
         var swap = xsw_usage()
@@ -516,10 +512,8 @@ enum MemorySampler {
             appBytes: appBytes,
             wiredBytes: wiredBytes,
             compressedBytes: compressedBytes,
-            cachedBytes: cachedBytes,
             freeBytes: freeBytes,
             swapUsedBytes: swap.xsu_used,
-            swapTotalBytes: swap.xsu_total,
             pressure: pressure,
             topProcesses: topProcesses
         )
@@ -566,7 +560,6 @@ final class SMCSampler {
     }
 
     private var connection: io_connect_t = 0
-    private var fanMinRPM: Int?
     private var fanMaxRPM: Int?
 
     init() {
@@ -575,7 +568,6 @@ final class SMCSampler {
             _ = IOServiceOpen(service, mach_task_self_, 0, &connection)
             IOObjectRelease(service)
         }
-        fanMinRPM = readFloat("F0Mn").map { Int($0.rounded()) }
         fanMaxRPM = readFloat("F0Mx").map { Int($0.rounded()) }
     }
 
@@ -585,12 +577,11 @@ final class SMCSampler {
         }
     }
 
-    func sample() -> (systemWatts: Double?, dcInWatts: Double?, fanRPM: Int?, fanMin: Int?, fanMax: Int?) {
-        guard connection != 0 else { return (nil, nil, nil, nil, nil) }
+    func sample() -> (systemWatts: Double?, fanRPM: Int?, fanMax: Int?) {
+        guard connection != 0 else { return (nil, nil, nil) }
         let sysW = readFloat("PSTR").map { Double($0) }
-        let dcW = readFloat("PDTR").map { Double($0) }
         let rpm = readFloat("F0Ac").map { max(0, Int($0.rounded())) }
-        return (sysW, dcW, rpm, fanMinRPM, fanMaxRPM)
+        return (sysW, rpm, fanMaxRPM)
     }
 
     private func readFloat(_ key: String) -> Float? {
@@ -739,16 +730,7 @@ final class ThermalSampler {
     }
 
     private func sampleDetailed() -> (celsius: Double?, details: ThermalDetails) {
-        var dieReadings: [ThermalSensorReading] = []
-        dieReadings.reserveCapacity(dieSensors.count)
-        for sensor in dieSensors {
-            if let value = readCelsius(from: sensor.service) {
-                dieReadings.append(
-                    ThermalSensorReading(id: sensor.name, label: sensor.label, celsius: value)
-                )
-            }
-        }
-        let dieValues = dieReadings.map(\.celsius)
+        let dieValues = dieSensors.compactMap { readCelsius(from: $0.service) }
         let avgDie = dieValues.isEmpty
             ? primarySensor.flatMap(readCelsius(from:))
             : dieValues.reduce(0, +) / Double(dieValues.count)
@@ -763,19 +745,14 @@ final class ThermalSampler {
 
         cachedTemperature = avgDie
         cachedDetails = ThermalDetails(
-            averageDieCelsius: avgDie,
             maxDieCelsius: maxDie,
             minDieCelsius: minDie,
             nandCelsius: nand,
             batteryCelsius: battery,
             boardAverageCelsius: boardAvg,
             systemPowerWatts: smc.systemWatts,
-            dcInPowerWatts: smc.dcInWatts,
             fanRPM: smc.fanRPM,
-            fanMinRPM: smc.fanMin,
-            fanMaxRPM: smc.fanMax,
-            dieSensors: dieReadings,
-            thermalStateLabel: Self.thermalStateLabel(ProcessInfo.processInfo.thermalState)
+            fanMaxRPM: smc.fanMax
         )
         return (avgDie, cachedDetails)
     }
@@ -795,16 +772,6 @@ final class ThermalSampler {
             || name.hasPrefix("PMU2 tdie")
             || name.hasPrefix("eACC MTR Temp Sensor")
             || name.hasPrefix("pACC MTR Temp Sensor")
-    }
-
-    private static func thermalStateLabel(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: "正常"
-        case .fair: "温热"
-        case .serious: "偏高"
-        case .critical: "过热降频"
-        @unknown default: "正常"
-        }
     }
 }
 

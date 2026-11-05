@@ -57,6 +57,7 @@ private final class MonitorPopoverPanel: NSPanel {
             let y = buttonFrame.minY - size.height + margin - 6
             setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         }
+        contentView?.isHidden = false
         makeKeyAndOrderFront(nil)
         button.highlight(true)
         DispatchQueue.main.async { [weak self, weak button] in
@@ -71,6 +72,7 @@ private final class MonitorPopoverPanel: NSPanel {
         removeMonitors()
         statusBarButton?.highlight(false)
         guard isVisible else { return }
+        contentView?.isHidden = true
         orderOut(nil)
         onClose?()
     }

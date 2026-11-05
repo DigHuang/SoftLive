@@ -10,7 +10,7 @@
     - **CPU 柱**：青色（浅色模式 `#0284C7` / 深色模式 `#38BDF8`；负载 `≥ 75%` 时转为高负载活力橙）。
     - **RAM 柱**：随内核 `memoryPressure` 实时联动变色（正常翡翠绿 → 压力偏高琥珀黄 → 压力吃紧珊瑚红）。
     - **TMP 柱**：热力渐变（`< 55 °C` 冰川青 → `55–72 °C` 琥珀黄 → `≥ 72 °C` 珊瑚红）。
-  - **macOS 26+ 原生 Liquid Glass 动态高度详情面板**：左键按下（`.leftMouseDown`）弹出 `.nonactivatingPanel` 承载 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)（不调用 `NSApp.activate()`，避免在刘海屏上因切换前台菜单栏导致状态栏图标跨刘海跳变；使用 `acceptsFirstMouse` + `.onTapGesture` 支持非激活态首击直达切换，并通过全局/本地鼠标与 `Esc` 监听实现点击外部即收起）。
+  - **macOS 26+ 原生 Liquid Glass 动态高度详情面板**：左键按下（`.leftMouseDown`）弹出 `.nonactivatingPanel` 承载 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)（不调用 `NSApp.activate()`，避免在刘海屏上因切换前台菜单栏导致状态栏图标跨刘海跳变；使用 `acceptsFirstMouse` + `.onTapGesture` 支持非激活态首击直达切换，并通过全局/本地鼠标与 `Esc` 监听实现点击外部即收起；收起时同步设置 `contentView.isHidden = true` 并在 `!monitor.isDetailActive` 时直接返回空视图短路 SwiftUI 重算）。
     - **原生亮暗自适应与 Liquid Glass**：不强制固定深色背景，直接使用系统原生 `Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 22))` 毛玻璃材质与动态语义色盘（`MonitorPalette`），自动跟随系统浅色/深色外观。
     - **动态高度与恒定内边距**：`.glassEffect` 直接包裹自然高度的 `VStack(spacing: 10).padding(14)`（不使用 `maxHeight: .infinity` 撑开底部空白），因此无论切换到 `CPU`、`RAM` 还是较短的 `TMP` 标签页，四周边距恒定为 `14 pt`，卡片高度通过 `.spring` 动画贴合内容，并通过 `onGeometryChange` 同步更新 `FirstMouseHostingView.activeTopHeight` 使下方透明区域点击穿透并关闭弹窗。
     - **三页遥测与进程强杀**：

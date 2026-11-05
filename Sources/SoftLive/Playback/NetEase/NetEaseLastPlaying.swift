@@ -43,7 +43,7 @@ final class NetEaseLastPlaying {
         .appending(path: "Documents/storage/CEFCache/Local Storage/leveldb", directoryHint: .isDirectory)
     // LevelDB appends to one `.log` and starts a new one when it compacts.
     private lazy var directoryWatcher = Self.directory.map { url in
-        FileWatcher(url: url, debounce: 0) { [weak self] in self?.followNewestLog() }
+        FileWatcher(url: url, debounce: 0.2) { [weak self] in self?.followNewestLog() }
     }
     private var logWatcher: FileWatcher?
     private var log: (url: URL, offset: UInt64)?
@@ -128,7 +128,7 @@ final class NetEaseLastPlaying {
 
     private func schedulePauseTimer() {
         pauseTimer?.invalidate()
-        pauseTimer = Timer.onMain(after: Self.pauseTimeout) { [weak self] in
+        pauseTimer = Timer.onMain(after: Self.pauseTimeout, tolerance: 0.4) { [weak self] in
             guard let self, self.isPlaying else { return }
             self.explicitPlaying = nil
             self.isPlaying = false
@@ -142,10 +142,9 @@ final class NetEaseLastPlaying {
               let newest = files.filter({ $0.pathExtension == "log" }).max(by: { Self.modified($0) < Self.modified($1) })
         else { return }
         if log?.url != newest {
-            readNewEntries()
             log = (newest, 0)
             logWatcher?.stop()
-            logWatcher = FileWatcher(url: newest, debounce: 0) { [weak self] in self?.readNewEntries() }
+            logWatcher = FileWatcher(url: newest, debounce: 0.05) { [weak self] in self?.readNewEntries() }
             logWatcher?.start()
         }
         readNewEntries()

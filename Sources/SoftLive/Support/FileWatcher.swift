@@ -36,6 +36,10 @@ final class FileWatcher {
         pendingNotify?.cancel()
     }
 
+    isolated deinit {
+        stop()
+    }
+
     private func changed() {
         if let events = source?.data, !events.isDisjoint(with: [.delete, .rename]) {
             // Replaced: watch the new item at the same path.

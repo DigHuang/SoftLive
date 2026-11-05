@@ -86,41 +86,48 @@ struct MonitorPopoverView: View {
     private var metrics: SystemMetrics { monitor.metrics }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            tabBar
-            switch selectedTab {
-            case .cpu:
-                cpuTabContent
-            case .ram:
-                ramTabContent
-            case .tmp:
-                tmpTabContent
-            }
-            footerBar
-        }
-        .padding(Self.innerPadding)
-        .frame(width: Self.cardWidth)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(
-                        colorScheme == .dark
-                            ? Color(red: 0.07, green: 0.09, blue: 0.13).opacity(0.55)
-                            : Color.white.opacity(0.62)
-                    )
+        Group {
+            if monitor.isDetailActive {
+                VStack(alignment: .leading, spacing: 10) {
+                    tabBar
+                    switch selectedTab {
+                    case .cpu:
+                        cpuTabContent
+                    case .ram:
+                        ramTabContent
+                    case .tmp:
+                        tmpTabContent
+                    }
+                    footerBar
+                }
+                .padding(Self.innerPadding)
+                .frame(width: Self.cardWidth)
+                .background {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(
+                                colorScheme == .dark
+                                    ? Color(red: 0.07, green: 0.09, blue: 0.13).opacity(0.55)
+                                    : Color.white.opacity(0.62)
+                            )
+                        Color.clear
+                            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { cardHeight in
+                    onActiveHeightChange?(cardHeight + 2 * Self.margin)
+                }
+                .padding(Self.margin)
+                .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
+                .animation(.spring(duration: 0.28, bounce: 0.05), value: selectedTab)
+                .focusEffectDisabled()
+            } else {
                 Color.clear
-                    .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                    .frame(width: 0, height: 0)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
-        } action: { cardHeight in
-            onActiveHeightChange?(cardHeight + 2 * Self.margin)
-        }
-        .padding(Self.margin)
-        .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
-        .animation(.spring(duration: 0.28, bounce: 0.05), value: selectedTab)
-        .focusEffectDisabled()
     }
 
     // MARK: - Horizontal Tab Bar (CPU / RAM / TMP)
@@ -207,11 +214,7 @@ struct MonitorPopoverView: View {
         case .ram:
             SystemMetrics.formatPercentage(metrics.memoryUsage)
         case .tmp:
-            if let c = metrics.temperatureCelsius {
-                "\(Int(c.rounded()))°"
-            } else {
-                "--°"
-            }
+            SystemMetrics.formatTemperature(metrics.temperatureCelsius)
         }
     }
 
@@ -355,7 +358,7 @@ struct MonitorPopoverView: View {
                                 Text("物理内存")
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.primary)
-                                Text(pressureLabel(d.pressure))
+                                Text(d.pressure.label)
                                     .font(.system(size: 9.5, weight: .bold))
                                     .foregroundStyle(badgeColor)
                                     .padding(.horizontal, 6)
@@ -441,13 +444,6 @@ struct MonitorPopoverView: View {
         }
     }
 
-    private func pressureLabel(_ level: MemoryPressureLevel) -> String {
-        switch level {
-        case .normal: "压力正常"
-        case .warning: "压力偏高"
-        case .critical: "压力吃紧"
-        }
-    }
 
     // MARK: - 3. TMP Tab
 
@@ -471,12 +467,12 @@ struct MonitorPopoverView: View {
                                     .padding(.vertical, 1.5)
                                     .background(accent.opacity(0.14), in: Capsule())
                             }
-                            Text("峰值 \(formatTemp(d.maxDieCelsius)) · 最低 \(formatTemp(d.minDieCelsius))")
+                            Text("峰值 \(SystemMetrics.formatTemperatureDetail(d.maxDieCelsius)) · 最低 \(SystemMetrics.formatTemperatureDetail(d.minDieCelsius))")
                                 .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(formatTemp(metrics.temperatureCelsius))
+                        Text(SystemMetrics.formatTemperatureDetail(metrics.temperatureCelsius))
                             .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(accent)
                     }
@@ -499,7 +495,7 @@ struct MonitorPopoverView: View {
                             Text("整机功耗")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
-                            Text(formatWatts(d.systemPowerWatts))
+                            Text(SystemMetrics.formatWatts(d.systemPowerWatts))
                                 .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(.primary)
                         }
@@ -567,7 +563,7 @@ struct MonitorPopoverView: View {
             }
             .frame(height: 5.5)
 
-            Text(formatTemp(celsius))
+            Text(SystemMetrics.formatTemperatureDetail(celsius))
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(color)
                 .frame(width: 50, alignment: .trailing)
@@ -797,16 +793,6 @@ struct MonitorPopoverView: View {
                             )
                     }
             }
-    }
-
-    private func formatTemp(_ celsius: Double?) -> String {
-        guard let celsius else { return "-- °C" }
-        return String(format: "%.1f °C", celsius)
-    }
-
-    private func formatWatts(_ watts: Double?) -> String {
-        guard let watts else { return "-- W" }
-        return String(format: "%.1f W", watts)
     }
 
     private func formatFan(_ details: ThermalDetails) -> String {
