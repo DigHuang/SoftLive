@@ -27,6 +27,13 @@
 - **桌面组件**：[`DesktopWidget`](../../Sources/SoftLive/UI/Overlay/DesktopWidget.swift)，窗口层级为 `kCGDesktopIconWindowLevel + 1`（`NSWindow.Level.desktopWidget`），位于桌面图标之上、所有 App 窗口之下，共用顶部头部并通过 `.spring` 动画在紧凑态与展开态之间平滑过渡：
   - **未播放（紧凑态）**：单行卡片（高度 88 pt），不展示空白歌词区与进度条；左侧展示所选播放器最近曲目的专辑封面，中间展示最近曲目与歌手，右侧上方为 `播放` 胶囊按钮、下方为横向排列的播放器 App Icon 切换栏（通过图标亮暗区分选中态）。
   - **播放中（展开态）**：高度 146 pt，顶部头部信息列内联紧凑进度条与时间（`━━━── 1:51 / 4:04`），右侧提供**暂停/继续（`⏸`/`▶`）**和**关闭（`✕`，退出后台播放器并收起回紧凑小组件）**两个圆形按钮，双击卡片空白处切下一首；下方区域完整留给双行歌词区（逐字当前句 + 翻译或下一句）。
+- **演示舞台模式**：[`StageWindow`](../../Sources/SoftLive/UI/Stage/StageWindow.swift) + [`StageCanvasView`](../../Sources/SoftLive/UI/Stage/StageCanvasView.swift) + [`StagePalette`](../../Sources/SoftLive/UI/Stage/StagePalette.swift)，独立无边框圆角可缩放舞台面板（`.nonactivatingPanel`，默认 `920 × 580 pt`，支持一键最大化/还原与记住位置，`sizingOptions = []`）：
+  - **流体极光背景与 3D 镜头律动**：切歌时将专辑封面降采样至 `12 × 12` 位图提取主色、互补副色与高饱和强调色（按图片对象引用缓存），驱动双层径向极光球沿 8 字形 `CAKeyframeAnimation` 漂移；舞台容器开启 3D 透视（`m34 = -1 / 640`），并在重音词与句尾词落点处通过单条关键帧动画驱动整场镜头推拉缩放与微倾角震动（`stageCameraPulse`），换行时上一句生成扩散上浮残影（`echoStageLayer`）。
+  - **两套高张力硬件关键帧律动 + 爆闪特效 + 声景黑胶间奏**：
+    - **流光（`.luminous`）**：以行时间戳与字序为确定性伪随机种子生成高反差字号（`0.86x–1.52x`）、大幅散落位移（`±44 / ±56 pt`）、倾角（`±12°`）与行级随机重心/对角斜率；每个词随机分配四种入场物理姿态（`pop3D` 3D 翻转果冻回弹、`dropSmash` 高空拉伸砸落压扁、`spinVortex` 旋风切入、`elasticWhip` 横向蓄力弹射），未唱时完全隐藏（`opacity = 0`），开唱前 `90 ms` 爆发弹入、峰值过冲至 `1.48x–1.62x` 并按 `scaleX` / `scaleY` 异相阻尼正弦产生果冻形变。
+    - **描金（`.inkTrace`）**：采用高对比度衬线字体（`.serif`）与微弧度黄金分割基准线排版，用 `CTLineGetGlyphRuns` + `CTFontCreatePathForGlyph` 提取每个词的矢量字形路径 `CGPath`，呈现三阶段**「极虚潜伏 → 镂空金线描边 → 鎏金实体定格」**：未唱时仅保留 `0.05` 透明度的极细游丝（无深色底块）；开唱前 65% 时长内，随 `.nonZero` 内部遮罩层同步点亮香槟金外描边（`goldStrokeLayer`）、亮金内倒角（`innerGoldLayer`）与纯白激光针尖（`cometLaserLayer`），沿镂空轮廓从 `0 → 1` 完整勾勒；后 35% 时长在金边合拢瞬间将内部灌满温润象牙金实体（`solidFillLayer`），且仅在每句收尾词触发一次空心金线残影扩散与星芒点缀。
+    - **十字星芒、扩散冲击环、星火与黑胶间奏**：重音与句尾词触发 EVA 式八向十字激光爆闪（`addCrossStarburst`）、扩散虚线/实线冲击环（`addShockwaveRing`）与放射星火短线（`addSparksIfNeeded`）；进入 `Interlude` 间奏时舞台中央切换为旋转黑胶唱片（嵌当前专辑封面标签）与三枚渐进呼吸光点。
+  - **沉浸式悬停控制栏**：鼠标移入时浮现顶/底半透明胶囊控制栏（`流光 / 描金` 风格切换、星火开关、最大化、播放/暂停/切歌），鼠标移出自动隐去；关闭窗口时 `contentView.isHidden = true` 并移除全部图层动画，后台 0 开销。
 - **逐字渲染**：
   - [`KaraokeText`](../../Sources/SoftLive/UI/Karaoke/KaraokeText.swift)：SwiftUI 包装。
   - [`KaraokeLayerView`](../../Sources/SoftLive/UI/Karaoke/KaraokeLayerView.swift)：用 CoreText 排版和光栅化，用 Core Animation 推进。
