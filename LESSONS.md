@@ -57,6 +57,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
   用户要求联网查，才发现 CloudLyrics-for-macOS 已经在读 `lastPlaying`。
 - 出现 1 次。
 
+**引入外部规范、GitHub Actions 或依赖项时，必须实时查询最新正式版本，不能凭记忆直接写旧版本号。**
+- 2026-11-07 编写 `CHANGELOG.md` 与 `.github/workflows/ci.yml` 时，直接按训练记忆写成了 `Keep a Changelog 1.1.0`、`actions/checkout@v4` 和 `actions/cache@v4`。实时检索官网与 GitHub Releases 后确认当前最新正式版分别为 `Keep a Changelog 2.0.0`、`actions/checkout@v7`（`v7.0.1`）和 `actions/cache@v6`（`v6.1.0`），随后全部返工升级。
+- 出现 1 次。
+
 ## 验证
 
 **批量提取或重命名按完整标识符替换，语法解析不能代替真实编译与测试。**
@@ -87,6 +91,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将唤醒态置为 `false`。
 - `NSEvent` 的 `.flagsChanged` 会在按下任意修饰键或方向键时触发，且 `@Observable` 属性每次赋值（哪怕新旧值相等）都会触发 `withMutation` 唤醒 `Observations`。若 `LyricsInteraction` 未在 `!panel.isVisible` 时短路、或未判断新旧值不等再写入，会导致隐藏状态下按任意修饰键仍在后台高频触发观察循环，甚至在鼠标偶经隐藏面板区域按 `⌘` 时提前把 `isAwake` 置为 `true`。
 - 出现 2 次。
+
+**使用 `NSEvent` 监听点击外部收起状态栏 `.nonactivatingPanel` 弹窗时，必须处理监听回调先于 `NSStatusBarButton.action` 触发的同次点击重开。**
+- 在 macOS 26 的 `NSSceneStatusItem` 下，状态栏项由系统菜单栏场景承载并包含多个变体窗口（`Presentation` / `ActiveSnapshot` / `InactiveSnapshot`），且 `.nonactivatingPanel` 展开时应用仍处于非激活态。用户第二次点击状态栏图标关闭弹窗时，`globalMonitor` 或 `localMonitor` 会先于 `NSStatusBarButton` 的 `statusItemClicked` 收到 `.leftMouseDown` 并调用 `dismiss()` 将 `panel.isVisible` 置为 `false`；紧接着同一次点击触发 `statusItemClicked` 时看到 `panel.isVisible == false`，误走打开分支把弹窗重新打开。此外弹窗四周波纹阴影留出的 `14 pt` 透明边距顶部有 `8 pt` 与菜单栏重叠，`hitTest` 与 `localMonitor` 必须按卡片实际内框判定，并在 `handleLeftClick` 中消费刚由外部点击监听触发的收起记录，防止同一次点击把刚收起的弹窗重新打开。
+- 出现 1 次。
 
 **周期性状态栏采样与弹窗详情采样必须避免全量跨进程 IPC、全字典 IORegistry 序列化、缓存穿透以及把开窗渲染耗时计入自身进程 CPU。**
 - 第一版 `ThermalSampler.sample()` 每秒对全部 14 个 `PMU tdie*` 传感器调用 `IOHIDServiceClientCopyEvent`（底层走 `io_hideventsystem_copy_event_for_service` → `hidd` Mach IPC），同时 `MonitorStatusBar` 每秒无条件赋值 `item.isVisible = true` 和 `item.length`（在 macOS 26 的 `NSSceneStatusItem` 上触发 `FrontBoardServices` 场景同步）并重建字体字典与 `NSImage`，导致单状态栏监控就占用 1–4% CPU。改为只保留 1 个主传感器句柄且每 3 拍查 1 次、缓存 `static let` 字体与段落样式、仅在 `item.isVisible` 变化时写入，并按 `DisplayKey` 去重重绘后，平时后台降至约 0.14% CPU。
