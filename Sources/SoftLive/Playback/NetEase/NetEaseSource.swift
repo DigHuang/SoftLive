@@ -161,7 +161,7 @@ final class NetEaseSource: PlayerSource {
             return
         }
         lookup = Task { [weak self] in
-            let track = (try? await NetEaseAPI.track(songID: latest.songID)) ?? nil
+            let track = (try? await NetEaseMetadata.track(songID: latest.songID)) ?? nil
             guard let self, !Task.isCancelled, self.currentPlay == latest else { return }
             self.publish(track ?? .unknownNetEaseSong(latest.songID), startedAt: latest.start)
         }

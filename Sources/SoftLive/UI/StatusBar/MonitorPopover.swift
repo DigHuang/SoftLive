@@ -1,14 +1,6 @@
 import AppKit
 import SwiftUI
 
-enum MonitorTab: String, CaseIterable, Identifiable {
-    case cpu = "CPU"
-    case ram = "RAM"
-    case tmp = "TMP"
-
-    var id: String { rawValue }
-}
-
 // MARK: - Adaptive Semantic Palette (Light & Dark Mode)
 
 enum MonitorPalette {
