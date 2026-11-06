@@ -6,7 +6,7 @@
   查找顺序：内存缓存 → 磁盘缓存 `~/Library/Caches/SoftLive/Lyrics-v4/<来源>-<ID>.json` → 网络。
 - **模型**：[`Lyrics`](../../Sources/SoftLive/Lyrics/Lyrics.swift) 是按时间排序的非空歌词行；一行有起止时间（`time` / `endTime`）、文本、可选的翻译、可选的逐字时间（`LyricWord`）以及演职员表判定（`isCredit`），并提供前奏/间奏区间计算（`interlude(at:)` 与 `nextEventTime(after:)`）。
 - **网络来源**：
-  - [`NetEaseAPI`](../../Sources/SoftLive/Lyrics/Providers/NetEaseAPI.swift)：歌词、搜索、歌曲详情。
+  - [`NetEaseAPI`](../../Sources/SoftLive/Lyrics/Providers/NetEaseAPI.swift)：歌词与目录搜索；搜索结果复用播放领域的 [`NetEaseSong`](../../Sources/SoftLive/Playback/NetEase/NetEaseSong.swift) 外部格式模型，歌词匹配候选转换留在本 provider 内。歌曲详情查询属于 [网易云播放接入](netease.md)。
   - [`LRCLibAPI`](../../Sources/SoftLive/Lyrics/Providers/LRCLibAPI.swift)：LRCLIB 搜索。
 
 ## 运行路径
@@ -17,11 +17,12 @@
 2. **其他曲目**：先搜网易云，再搜 LRCLIB，由 [`TrackMatcher`](../../Sources/SoftLive/Lyrics/TrackMatcher.swift) 选出最匹配的结果。
    - 先清洗标题，去掉 `(Live)`、`[Remastered]`、`- 2011 Remaster`、`feat.` 等后缀。
    - 再按「标题 > 歌手 > 时长」打分；时长相差超过 8 秒的候选直接排除。
-3. **翻译对齐與空行过滤**：`Lyrics.init` 先过滤掉纯空白行（实测网易云 LRC 如 `3445957923` 常在每段末句开唱后仅 `0.30–0.74s` 处插入空时间标签 `[mm:ss.xx]` 作为段落空行，保留空行或将其当成句尾标记会在歌词刚唱一个字时就截断当前句），再把每条翻译挂到时间最近的歌词行（相差不超过 0.75 秒，每行最多一条）。
+3. **翻译对齐与空行过滤**：`Lyrics.init` 先过滤掉纯空白行（实测网易云 LRC 如 `3445957923` 常在每段末句开唱后仅 `0.30–0.74s` 处插入空时间标签 `[mm:ss.xx]` 作为段落空行，保留空行或将其当成句尾标记会在歌词刚唱一个字时就截断当前句），再把每条翻译挂到时间最近的歌词行（相差不超过 0.75 秒，每行最多一条）。
    逐字歌词每行的开始时间和翻译的时间戳本来就有偏差，所以需要这个容差。
 4. **前奏、演职员表与间奏识别**：
-   - `LyricLine.isCredit` 识别 `作词 / 作曲 / 编曲 / 制作 / 混音 / 录音 / 母带 / 统筹 / 策划 / 企划 / 出品 / 发行 / 原唱 / OP / SP` 等演职员行（连续演职员行之间不进间奏，最后一条演职员行最多展示 `2.5s`）。
-   - 首句前纯伴奏或末条演职员行结束后距首句正文的剩余空白 `≥ 5.0s` 时进入前奏 `Interlude`；句间则在当前句唱完后（YRC 为末词结束 `+ 1.5s` 余韵；无逐字时间的 LRC 按慢歌单句最长 `8.0s` 演唱时长计算）且距下一句剩余空白仍 `≥ 7.0s`（即 LRC 两句间隔 `≥ 15.0s`）时才返回 `Interlude(start:end:)`。
+   - `LyricLine.isCredit` 根据冒号前的角色名识别演职员行（如作词、作曲、制作、OP、SP）。相邻两条演职员行间隔 `< 6.0s` 时保持逐行展示；其他演职员行仅在保留 `2.5s` 展示后、到下一行仍剩 `≥ 5.0s` 时切入间奏，否则一直保留到下一行，不承诺 `2.5s` 截断。
+   - 首行不是演职员行、且时间 `≥ 5.0s` 时，首行前显示前奏 `Interlude`。
+   - 正文句间需在当前句结束后仍剩 `≥ 7.0s` 空白：有逐字时间时取末词结束（至少按 `0.5s` 词长、整句至少 `1.5s`）再保留 `1.5s` 余韵；只有 `endTime` 时按行尾加余韵；普通 LRC 无行尾时按 `8.0s` 行长计算。因此普通 LRC 两行需间隔 `≥ 15.0s` 才进入间奏。具体判定见 `Lyrics.upcomingInterlude(at:)`。
 
 ## 约束与失败行为
 

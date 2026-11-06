@@ -3,8 +3,8 @@ import Observation
 import SwiftUI
 
 /// Standalone showcase stage window ("演示舞台模式"):
-/// fluid album-tinted aurora backdrop, four hardware-accelerated kinetic typography styles
-/// (`流光`, `云阶`, `海报`, `描金`), radial spark bursts, vinyl interlude centerpiece,
+/// fluid album-tinted aurora backdrop, two hardware-accelerated kinetic typography styles
+/// (`流光`, `描金`), radial spark bursts, vinyl interlude centerpiece,
 /// and hover-revealed Liquid Glass HUD controls.
 final class StageWindow: NSPanel {
     static let defaultSize = NSSize(width: 920, height: 580)

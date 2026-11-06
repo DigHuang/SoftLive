@@ -74,7 +74,7 @@ import Testing
         #expect(tmpBelow != tmpAbove)
     }
 
-    @Test @MainActor func togglesDetailActiveModeCleanly() {
+    @Test func togglesDetailActiveModeCleanly() {
         let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
