@@ -1,6 +1,15 @@
 import Foundation
 
-/// Immutable snapshot of system resource metrics sampled by `SystemMonitor`.
+/// Selects which detailed metrics the monitor samples for its consumer.
+enum MonitorTab: String, CaseIterable, Identifiable, Sendable {
+    case cpu = "CPU"
+    case ram = "RAM"
+    case tmp = "TMP"
+
+    var id: String { rawValue }
+}
+
+/// Value snapshot of system resource metrics sampled by `SystemMonitor`.
 struct SystemMetrics: Equatable, Sendable {
     var cpuUsage: Double = 0
     var memoryUsage: Double = 0

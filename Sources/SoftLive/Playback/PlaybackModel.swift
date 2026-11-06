@@ -104,7 +104,7 @@ final class PlaybackModel {
 
     private func sourceDidChange(_ source: any PlayerSource) {
         updateRecentTrack(for: source)
-        // A player that starts playing takes over; otherwise prefer any playing source, or stay with the current one.
+        // Any update from a playing source takes over; otherwise prefer a playing source, or keep the current one.
         if source.state?.isPlaying == true {
             isDismissed = false
             activeSource = source

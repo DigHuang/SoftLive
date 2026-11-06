@@ -7,6 +7,12 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - **毕业**：同一条出现满 3 次，就并入 [docs/code-standards.md](docs/code-standards.md)，并从这里删掉。
 - **清理**：已经被代码或规范彻底杜绝、不可能再犯的条目，直接删掉。
 
+## 分支与交付
+
+**独立任务使用独立分支；当前分支已有其他任务的工作或已合入时，从最新目标分支新建分支再提交 PR。**
+- 2026-11-06，舞台功能已通过 PR 合入 `main`，但本轮清理仍沿用 `feat/stage-mode`，并为对齐目标分支生成合并提交、处理重复引入的内容后创建 PR。用户明确指出应另开分支；改为从最新 `main` 新建清理分支，仅迁移本轮改动并替换 PR。创建 PR 前要核对任务归属与分支是否已合入，不能仅检查是否有打开的 PR。
+- 出现 1 次。
+
 ## 数据与判断
 
 **直接扫描二进制日志文件或调用内核 IOKit 结构体接口时，必须核对底层容器的分块边界与 C 结构体字节对齐。**
@@ -53,6 +59,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 
 ## 验证
 
+**批量提取或重命名按完整标识符替换，语法解析不能代替真实编译与测试。**
+- 2026-11-06 拆分舞台渲染时，替换类型名 `WordPose` 连带改坏了包含该子串的 `applyWordPoseTimeline`，生成 `applyStageWordAnimation.PoseTimeline`。`swiftc -frontend -parse` 能接受语法，但 `swift test` 的类型检查立即报找不到符号；改为 `StageWordAnimation.applyWordPoseTimeline` 后再跑全部测试与 Release 编译。
+- 出现 1 次。
+
 **性能要在用户真实的使用场景里测，并用采样定位开销，不要只测一个窗口或凭经验猜。**
 - 加入桌面组件时，测到 CPU 15–20%，去掉持续动画的波形图标后报告 0.5–6%。
   但用户在双窗口、逐字歌词播放时仍觉得异常；在同样场景下实测是 9–14%。
@@ -68,9 +78,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - `NetEaseSource.reported(_:)` 每 1.8 秒收到一条同曲目的 `lastPlaying` 进度汇报时都会无条件调用 `reload()`，触发主线程同步打开读取 `sqlite_storage.sqlite3` 并遍历 `online_play_cache` 目录；`AppleMusicSource` 每 2 秒校对拖动时也调用完整 `refresh()` 发起 8 次同步 ScriptingBridge AppleEvent IPC。播放期间只需在曲目变化时 `reload()`（并对缓存目录按 `contentModificationDateKey` 做内存缓存），Apple Music 拖动校对只需单次读取 `playerPosition`。
 - 出现 1 次。
 
-**前后对比必须在相同条件下测。**
+**性能结论必须标明适用场景，前后对比要在相同条件下测。**
 - 优化 CPU 那一轮报告内存从 87.7 MB 降到 23.6 MB，但两个数字分别是启动后约 6 秒和约 1 秒采到的，不能比较；后来已更正。
-- 出现 1 次。
+- 加入独立舞台后，README 仍把此前仅开启桌面歌词与桌面组件测得的 `0–0.8% CPU` 写成整个 App 的播放性能。2026-11-06 审查时将其限定回原场景，并明确舞台性能待测；增加窗口与渲染风格后不能沿用旧测量结论。
+- 出现 2 次。
 
 **`NSWindow.ignoresMouseEvents = true` 不会阻止 SwiftUI `.onHover` 触发；全局事件监听必须在面板不可见时短路，且只在值变化时写入 `@Observable` 属性。**
 - SwiftUI 的 `.onHover` 底层使用 `NSTrackingArea(.activeAlways)`，即使窗口开启了 `ignoresMouseEvents = true`（鼠标点击穿透），鼠标划过窗口时 `.onHover` 依然会触发 `true`。因此悬停态 UI（如桌面歌词毛玻璃背景与控制栏）必须同时判断 `!desktopLyricsLocked`，并在点击锁定按钮时立即将唤醒态置为 `false`。
