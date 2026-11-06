@@ -45,6 +45,23 @@ final class AppMenu: NSObject, NSMenuDelegate {
         menu.addItem(item("桌面组件", isOn: preferences.showsDesktopWidget) { [preferences] in
             preferences.showsDesktopWidget.toggle()
         })
+        menu.addItem(item("演示舞台模式", isOn: preferences.showsStageWindow) { [preferences] in
+            preferences.showsStageWindow.toggle()
+        })
+        let stageSubmenu = NSMenu()
+        for style in StageStyle.allCases {
+            stageSubmenu.addItem(item("\(style.displayName) — \(style.subtitle)", isOn: preferences.stageStyle == style) { [preferences] in
+                preferences.stageStyle = style
+                preferences.showsStageWindow = true
+            })
+        }
+        stageSubmenu.addItem(.separator())
+        stageSubmenu.addItem(item("星火特效", isOn: preferences.stageSparks) { [preferences] in
+            preferences.stageSparks.toggle()
+        })
+        let stageStyleItem = NSMenuItem(title: "舞台律动风格（\(preferences.stageStyle.displayName)）", action: nil, keyEquivalent: "")
+        stageStyleItem.submenu = stageSubmenu
+        menu.addItem(stageStyleItem)
         menu.addItem(.separator())
 
         let hasLyrics = model.lyrics != nil

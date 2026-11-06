@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitorStatusBar: MonitorStatusBar?
     private var desktopLyrics: OverlayPanel?
     private var desktopWidget: OverlayPanel?
+    private var stageWindow: StageWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement only applies to the bundled app; keep `swift run` out of the Dock too.
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lyricsStatusBar = LyricsStatusBar(model: model, preferences: preferences, menu: appMenu.menu)
         desktopLyrics = DesktopLyrics.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
         desktopWidget = DesktopWidget.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
+        stageWindow = StageWindow(model: model, preferences: preferences, menu: appMenu.menu)
         model.start()
     }
 
