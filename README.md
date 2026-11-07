@@ -1,5 +1,7 @@
 # SoftLive
 
+<img src="Resources/Branding/app-icon.png" width="96" alt="SoftLive · Sync 霜光图标">
+
 在 macOS 的菜单栏、桌面悬浮窗、桌面组件和独立舞台窗口里，同步显示 **Apple Music / 网易云音乐** 正在播放的歌词，并在菜单栏监控 **CPU、内存、SoC 温度与上下行网速**。
 
 - **状态栏歌词**：显示当前行，长句尾部截断。
@@ -42,6 +44,7 @@ Apple Music 首次使用需允许「自动化 → Music」授权；网易云无�
 | [需求](docs/requirements.md) | 目标、验收标准、明确不做的事与待验证项 |
 | [子系统参考](docs/subsystems/README.md) | 各子系统的运行方式、约束与实测依据 |
 | [代码规范](docs/code-standards.md) | 代码与审查标准 |
+| [品牌资源](Resources/Branding/README.md) | Sync 霜光图标的源文件与打包方式 |
 | [LESSONS.md](LESSONS.md) | 开发错误的证据与对应规则 |
 
 ## 已知限制

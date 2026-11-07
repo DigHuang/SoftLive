@@ -12,7 +12,7 @@ final class LyricsStatusBar {
     init(model: PlaybackModel, preferences: Preferences, menu: NSMenu) {
         item.menu = menu
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "SoftLive")
+            button.image = BrandAssets.syncTemplate
             button.cell?.lineBreakMode = .byTruncatingTail
         }
         Task { [weak self] in
@@ -35,7 +35,7 @@ final class LyricsStatusBar {
     private func show(_ text: String) {
         guard let button = item.button, button.title != text || item.length == 0 else { return }
         button.title = text
-        // The note icon only stands in while there is no text, to save menu-bar space.
+        // The Sync icon only stands in while there is no text, to save menu-bar space.
         button.imagePosition = text.isEmpty ? .imageOnly : .noImage
         item.length = text.isEmpty
             ? NSStatusItem.squareLength

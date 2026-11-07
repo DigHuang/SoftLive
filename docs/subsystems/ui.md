@@ -5,9 +5,15 @@
 - 界面读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift)、[`SystemMonitor`](../../Sources/SoftLive/Monitor/SystemMonitor.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，通过模型方法发起播放控制、详情采样选择与结束进程；不直接访问播放器存储、采样器或网络。独立舞台的排版与特效见 [舞台模式](stage.md)。
 - [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是共享主菜单，两个状态栏项、右键桌面歌词/组件/舞台窗口及再次打开 App 都可访问。
 
+## 应用图标与打包
+
+- 正式图标采用「Sync / 同频 × 霜光」：[`AppIcon.icon`](../../Resources/Branding/AppIcon.icon/icon.json) 使用系统背景与独立的细节缎带图层，避免系统再给旧式完整底板套框。矢量图层保留柔和的曲面折返，下方前后两面使用一致的连接边界与底色；预览和独立单色标志见 [品牌资源](../../Resources/Branding/README.md)。
+- [`build-app.sh`](../../Scripts/build-app.sh) 使用 Xcode `actool` 编译原生 `Assets.car` 与兼容 `AppIcon.icns`，连同状态栏位图复制到 `Contents/Resources` 后再签名；[`Info.plist`](../../Resources/Info.plist) 声明 `CFBundleIconFile` 与 `CFBundleIconName`。
+
 ## 状态栏
 
 - [`LyricsStatusBar`](../../Sources/SoftLive/UI/StatusBar/LyricsStatusBar.swift) 显示 `PlaybackModel.headline`，最大宽度 260 pt，长句截断。关闭状态栏歌词且开启系统监控时隐藏该项，释放菜单栏空间。
+- 无歌词文字时显示 18 × 18 pt 的单色 Sync 模板图标，随系统外观着色；有歌词时仅显示文字。128 × 128 px 模板由 [`BrandAssets`](../../Sources/SoftLive/UI/Branding/BrandAssets.swift) 缓存，与桌面组件共用，通过 SwiftPM 资源支持本地运行，App 打包时也复制到主资源目录。
 - [`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 使用 `52 × 22 pt` 非模板图像：左侧上下两行上传/下载紧凑数值，右侧 CPU / RAM / TMP 三根语义彩色柱，温度按 `0–100 °C` 映射。文字、底轨与语义颜色适配系统外观；字体和段落样式缓存，仅在 `DisplayKey`（文本、柱高步进或颜色分段）变化时重绘。
 - 左键按下打开 `.nonactivatingPanel` 承载的 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)，期间状态栏按钮保持高亮；右键打开主菜单。首击直达控件，不激活 SoftLive；点击外部或按 `Esc` 收起。
 - 详情页为 CPU / RAM / TMP：CPU 显示趋势、核心与 GPU 负载、Top 10 进程；RAM 显示趋势、内存构成与压力、Swap、Top 10 进程；TMP 显示趋势、部位热力、整机功耗与风扇。底栏显示完整上下行速率。数据来源、周期、按需采样和失败表现统一见 [系统监控](monitor.md)。
@@ -29,6 +35,7 @@
 [`DesktopWidget`](../../Sources/SoftLive/UI/Overlay/DesktopWidget.swift) 位于桌面图标之上、App 窗口之下，支持拖动、保存位置和双击切下一首。
 
 - 未播放时是紧凑卡片，显示所选播放器最近曲目与封面、播放器选择和播放按钮，不保留空歌词区或进度条。
+- 无封面时显示 28 × 28 pt 的单色 Sync 标志，使用次级文字色；播放器选择按钮保留各播放器自己的图标。
 - 播放时展开曲目、封面、进度、双行歌词及播放/暂停、关闭按钮。关闭通过 `PlaybackModel.closePlayback()` 退出目标播放器并收起卡片。
 - 进度条每秒刷新，时间用整数格式化；组件关闭时不启动 `TimelineView` 调度。
 

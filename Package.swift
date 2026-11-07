@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "SoftLive",
+            resources: [.copy("UI/Branding/Resources/SyncTemplate.png")],
             swiftSettings: [.defaultIsolation(MainActor.self)]
         ),
         .testTarget(

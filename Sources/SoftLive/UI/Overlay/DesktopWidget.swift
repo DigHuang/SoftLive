@@ -225,7 +225,12 @@ private struct Artwork: View {
             Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
         } else {
             Rectangle().fill(.quaternary).overlay {
-                Image(systemName: "music.note").foregroundStyle(.secondary)
+                Image(nsImage: BrandAssets.syncTemplate)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+                    .foregroundStyle(.secondary)
             }
         }
     }
