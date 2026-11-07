@@ -4,13 +4,13 @@ import Observation
 /// Periodically samples CPU, memory, thermal, and network metrics while enabled in `Preferences`.
 @Observable
 final class SystemMonitor {
-    private static let interval: TimeInterval = 2.0
     private static let historyCapacity = 30
 
     private(set) var metrics: SystemMetrics = .zero
     private(set) var detailMetrics: SystemMetrics = .zero
     private(set) var activeTab: MonitorTab = .cpu
 
+    private let preferences: Preferences
     private let cpuSampler = CPUSampler()
     private let thermalSampler = ThermalSampler()
     private let networkSampler = NetworkSampler()
@@ -20,14 +20,24 @@ final class SystemMonitor {
     private var thermalHistory: [Double] = []
     private var excludedPIDs: Set<pid_t> = []
     private var timer: Timer?
+    private var currentInterval: TimeInterval = MonitorSampleInterval.standard.rawValue
+    private var isEnabled = false
     private var observeTask: Task<Void, Never>?
     private var openRefreshTask: Task<Void, Never>?
     private(set) var isDetailActive = false
 
     init(preferences: Preferences) {
+        self.preferences = preferences
+        self.activeTab = preferences.monitorDefaultTab
         observeTask = Task { [weak self] in
-            for await enabled in Observations({ preferences.showsSystemMonitor }) {
-                self?.setEnabled(enabled)
+            for await (enabled, interval, defaultTab) in Observations({
+                (
+                    preferences.showsSystemMonitor,
+                    preferences.monitorSampleInterval.rawValue,
+                    preferences.monitorDefaultTab
+                )
+            }) {
+                self?.applyConfiguration(enabled: enabled, interval: interval, defaultTab: defaultTab)
             }
         }
     }
@@ -55,6 +65,7 @@ final class SystemMonitor {
         openRefreshTask?.cancel()
         openRefreshTask = nil
         if active {
+            activeTab = preferences.monitorDefaultTab
             poll(recordHistory: false)
             openRefreshTask = Task { [weak self] in
                 // Wait for the popover window's initial presentation and CoreAnimation
@@ -90,7 +101,15 @@ final class SystemMonitor {
         return ok
     }
 
-    private func setEnabled(_ enabled: Bool) {
+    private func applyConfiguration(enabled: Bool, interval: TimeInterval, defaultTab: MonitorTab) {
+        if !isDetailActive, activeTab != defaultTab {
+            activeTab = defaultTab
+        }
+        guard enabled != isEnabled || (enabled && interval != currentInterval) else { return }
+        let wasEnabled = isEnabled
+        isEnabled = enabled
+        currentInterval = interval
+
         timer?.invalidate()
         timer = nil
         openRefreshTask?.cancel()
@@ -104,12 +123,14 @@ final class SystemMonitor {
             detailMetrics = .zero
             return
         }
-        processSampler.captureBaseline()
-        poll(recordHistory: true)
-        let scheduled = Timer.onMain(after: Self.interval, repeats: true) { [weak self] in
+        if !wasEnabled {
+            processSampler.captureBaseline()
+            poll(recordHistory: true)
+        }
+        let scheduled = Timer.onMain(after: interval, repeats: true) { [weak self] in
             self?.poll(recordHistory: true)
         }
-        scheduled.tolerance = 0.25
+        scheduled.tolerance = min(0.25, interval * 0.15)
         timer = scheduled
     }
 

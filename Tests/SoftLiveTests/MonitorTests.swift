@@ -57,16 +57,26 @@ import Testing
         #expect(image.size == NSSize(width: 52, height: 22))
         #expect(image.tiffRepresentation != nil)
 
+        let compactImage = MonitorStatusBar.renderImage(for: metrics, style: .barsOnly)
+        #expect(compactImage.size == NSSize(width: 20, height: 22))
+
         // Crossing color thresholds within the same integer bar-height step must produce distinct DisplayKeys.
-        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.74))
-        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.76))
+        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.795))
+        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.805))
         #expect(cpuBelow.cpuBarSteps == cpuAbove.cpuBarSteps)
         #expect(cpuBelow != cpuAbove)
 
-        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.87))
-        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.89))
-        #expect(ramBelow.ramBarSteps == ramAbove.ramBarSteps)
-        #expect(ramBelow != ramAbove)
+        let customThresholdHit = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(cpuUsage: 0.72),
+            cpuThreshold: MonitorCPUAlertThreshold.low.fraction
+        )
+        #expect(customThresholdHit.cpuHigh)
+
+        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.84))
+        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.86))
+        #expect(ramBelow.ramBarSteps != ramAbove.ramBarSteps || ramBelow != ramAbove)
+        #expect(!ramBelow.ramWarning)
+        #expect(ramAbove.ramWarning)
 
         let tmpBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 54.0))
         let tmpAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 55.5))
@@ -95,6 +105,54 @@ import Testing
         #expect(monitor.activeTab == .tmp)
 
         monitor.setDetailActive(false)
+        #expect(!monitor.isDetailActive)
+    }
+
+    @Test func statusBarSecondClickClosesPopoverEvenAfterMonitorDismissal() {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+        let statusBar = MonitorStatusBar(monitor: monitor, preferences: prefs, menu: NSMenu())
+        let t0 = ContinuousClock.Instant.now
+
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // 1st click opens the popover.
+        statusBar.handleLeftClick(now: t0)
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        // Direct 2nd click closes the popover.
+        let t1 = t0.advanced(by: .seconds(1))
+        statusBar.handleLeftClick(now: t1)
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // Re-open the popover.
+        let t2 = t1.advanced(by: .seconds(1))
+        statusBar.handleLeftClick(now: t2)
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        // Simulate macOS delivering the 2nd click to the global/local event monitor first,
+        // followed milliseconds later by NSStatusBarButton's action for the same click.
+        let t3 = t2.advanced(by: .seconds(1))
+        statusBar.dismissFromOutsideClick(now: t3)
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(20)))
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // Because the 2nd click consumed the suppression window, an immediate 3rd click re-opens cleanly.
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(100)))
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(200)))
+        #expect(!statusBar.isPopoverVisible)
         #expect(!monitor.isDetailActive)
     }
 }

@@ -3,11 +3,8 @@ import Observation
 
 /// Menu-bar lyrics item.
 final class LyricsStatusBar {
-    /// Long lines truncate instead of pushing other items away. If the menu bar has no room left
-    /// (common next to the notch) macOS hides the item; the menu stays reachable from the desktop panels.
-    private static let maxWidth: CGFloat = 260
-
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private var lastMaxWidth: CGFloat = 0
 
     init(model: PlaybackModel, preferences: Preferences, menu: NSMenu) {
         item.menu = menu
@@ -16,8 +13,13 @@ final class LyricsStatusBar {
             button.cell?.lineBreakMode = .byTruncatingTail
         }
         Task { [weak self] in
-            for await (showsLyrics, showsMonitor, headline) in Observations({
-                (preferences.showsStatusBarLyrics, preferences.showsSystemMonitor, model.headline)
+            for await (showsLyrics, showsMonitor, headline, maxWidth) in Observations({
+                (
+                    preferences.showsStatusBarLyrics,
+                    preferences.showsSystemMonitor,
+                    model.headline,
+                    preferences.statusBarWidthPreset.maxWidth
+                )
             }) {
                 guard let self else { return }
                 // Hide the lyrics status item completely when the user turned it off and the
@@ -27,18 +29,21 @@ final class LyricsStatusBar {
                     self.item.isVisible = shouldBeVisible
                 }
                 guard shouldBeVisible else { continue }
-                self.show(showsLyrics ? headline : "")
+                self.show(showsLyrics ? headline : "", maxWidth: maxWidth)
             }
         }
     }
 
-    private func show(_ text: String) {
-        guard let button = item.button, button.title != text || item.length == 0 else { return }
+    private func show(_ text: String, maxWidth: CGFloat) {
+        guard let button = item.button,
+              button.title != text || item.length == 0 || lastMaxWidth != maxWidth
+        else { return }
+        lastMaxWidth = maxWidth
         button.title = text
         // The Sync icon only stands in while there is no text, to save menu-bar space.
         button.imagePosition = text.isEmpty ? .imageOnly : .noImage
         item.length = text.isEmpty
             ? NSStatusItem.squareLength
-            : min(button.attributedTitle.size().width + 16, Self.maxWidth)
+            : min(button.attributedTitle.size().width + 16, maxWidth)
     }
 }

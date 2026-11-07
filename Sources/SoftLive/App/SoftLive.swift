@@ -14,29 +14,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = PlaybackModel()
     private let preferences = Preferences()
     private lazy var monitor = SystemMonitor(preferences: preferences)
-    private lazy var appMenu = AppMenu(model: model, preferences: preferences)
+    private lazy var appMenu = AppMenu(model: model, preferences: preferences) { [weak self] section in
+        self?.controlCenterWindow?.show(section: section)
+    }
     private var lyricsStatusBar: LyricsStatusBar?
     private var monitorStatusBar: MonitorStatusBar?
     private var desktopLyrics: OverlayPanel?
     private var desktopWidget: OverlayPanel?
     private var stageWindow: StageWindow?
+    private var controlCenterWindow: ControlCenterWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement only applies to the bundled app; keep `swift run` out of the Dock too.
         NSApp.setActivationPolicy(.accessory)
-        monitorStatusBar = MonitorStatusBar(monitor: monitor, preferences: preferences, menu: appMenu.menu)
+        monitorStatusBar = MonitorStatusBar(
+            monitor: monitor,
+            preferences: preferences,
+            menu: appMenu.menu,
+            onOpenSettings: { [weak self] in
+                self?.controlCenterWindow?.show(section: .monitor)
+            }
+        )
         lyricsStatusBar = LyricsStatusBar(model: model, preferences: preferences, menu: appMenu.menu)
         desktopLyrics = DesktopLyrics.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
         desktopWidget = DesktopWidget.makePanel(model: model, preferences: preferences, menu: appMenu.menu)
         stageWindow = StageWindow(model: model, preferences: preferences, menu: appMenu.menu)
+        controlCenterWindow = ControlCenterWindow(
+            model: model,
+            monitor: monitor,
+            preferences: preferences
+        )
         model.start()
     }
 
-    /// Opening the app again while it runs pops the menu up at the pointer: a way back in
-    /// when the status item is hidden and the desktop lyrics are locked.
+    /// Reopening the app brings up the unified Desktop Configuration Center window:
+    /// a discoverable entry point even when the status item is hidden behind the notch
+    /// and the desktop lyrics are locked.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        NSApp.activate() // An inactive app's pop-up menu closes right away.
-        appMenu.menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        controlCenterWindow?.show()
         return false
     }
 }

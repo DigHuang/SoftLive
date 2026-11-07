@@ -13,4 +13,16 @@ enum BrandAssets {
         image.accessibilityDescription = "SoftLive"
         return image
     }()
+
+    /// Full-color app icon (`Sync / 同频 × 霜光`) for brand entry and product overview surfaces.
+    static var appIcon: NSImage {
+        if let named = NSImage(named: "AppIcon") {
+            return named
+        }
+        if let bundleURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icns = NSImage(contentsOf: bundleURL) {
+            return icns
+        }
+        return NSApp.applicationIconImage ?? syncTemplate
+    }
 }

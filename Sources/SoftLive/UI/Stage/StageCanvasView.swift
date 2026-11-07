@@ -347,7 +347,7 @@ final class StageCanvasView: NSView {
         )
         let subLayer = CALayer()
         subLayer.bounds = CGRect(origin: .zero, size: boxSize)
-        subLayer.position = CGPoint(x: w / 2, y: 84)
+        subLayer.position = CGPoint(x: w / 2, y: 98)
         subLayer.contents = image
         subLayer.contentsScale = key.backingScale
         footerLayer.addSublayer(subLayer)

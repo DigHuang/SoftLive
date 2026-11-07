@@ -6,13 +6,19 @@ final class AppMenu: NSObject, NSMenuDelegate {
     private static let offsetStep: TimeInterval = 0.5
 
     let menu = NSMenu()
+    var onOpenControlCenter: ((ControlCenterSection?) -> Void)?
     private let model: PlaybackModel
     private let preferences: Preferences
     private var actions: [() -> Void] = []
 
-    init(model: PlaybackModel, preferences: Preferences) {
+    init(
+        model: PlaybackModel,
+        preferences: Preferences,
+        onOpenControlCenter: ((ControlCenterSection?) -> Void)? = nil
+    ) {
         self.model = model
         self.preferences = preferences
+        self.onOpenControlCenter = onOpenControlCenter
         super.init()
         menu.autoenablesItems = false
         menu.delegate = self
@@ -28,6 +34,11 @@ final class AppMenu: NSObject, NSMenuDelegate {
         } else {
             menu.addItem(info("未检测到正在播放的 Apple Music / 网易云音乐"))
         }
+        menu.addItem(.separator())
+
+        menu.addItem(item("配置中心…", key: ",") { [weak self] in
+            self?.onOpenControlCenter?(nil)
+        })
         menu.addItem(.separator())
 
         menu.addItem(item("显示状态栏监控", isOn: preferences.showsSystemMonitor) { [preferences] in

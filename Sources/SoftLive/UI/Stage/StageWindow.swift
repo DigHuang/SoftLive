@@ -25,6 +25,7 @@ final class StageWindow: NSPanel {
         level = .normal
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         minSize = Self.minWindowSize
+        appearance = NSAppearance(named: .darkAqua)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -83,16 +84,9 @@ final class StageWindow: NSPanel {
 @Observable
 final class StageWindowState {
     var isHovered = false
-    @ObservationIgnored private var cachedPalette: StagePalette = .fallback
-    @ObservationIgnored private var lastArtworkID: ObjectIdentifier?
 
     func palette(for artwork: NSImage?) -> StagePalette {
-        let id = artwork.map(ObjectIdentifier.init)
-        if id != lastArtworkID {
-            lastArtworkID = id
-            cachedPalette = StagePalette.extract(from: artwork)
-        }
-        return cachedPalette
+        StagePalette.cached(for: artwork)
     }
 }
 
@@ -127,7 +121,7 @@ private final class StageHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-private struct StageWindowView: View {
+struct StageWindowView: View {
     let model: PlaybackModel
     let preferences: Preferences
     let windowState: StageWindowState
@@ -179,6 +173,14 @@ private struct StageWindowView: View {
                     artwork: activeArtwork
                 )
 
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        if model.playback != nil {
+                            model.nextTrack()
+                        }
+                    }
+
                 VStack(spacing: 0) {
                     topBar(palette: palette)
                         .opacity(showHUD ? 1 : 0)
@@ -213,166 +215,166 @@ private struct StageWindowView: View {
 
     private func topBar(palette: StagePalette) -> some View {
         HStack(spacing: 10) {
+            // Top-left: clean standalone window action circles without double-nested capsule borders or verbose text.
             HStack(spacing: 8) {
                 hudCircleButton(icon: "xmark", help: "关闭演示舞台", action: onClose)
-                hudCircleButton(icon: "arrow.up.left.and.arrow.down.right", help: "切换最大化舞台", action: onToggleZoom)
-
-                Text(preferences.stageStyle.subtitle)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .padding(.leading, 4)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.black.opacity(0.46), in: .capsule)
-            .overlay {
-                Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+                hudCircleButton(
+                    icon: "arrow.up.left.and.arrow.down.right",
+                    help: "切换最大化舞台",
+                    action: onToggleZoom
+                )
             }
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 6) {
+            // Top-right: uniform 4pt inset segmented capsule with monochrome frost selection.
+            HStack(spacing: 2) {
                 ForEach(StageStyle.allCases, id: \.self) { style in
                     let isSelected = preferences.stageStyle == style
                     Text(style.displayName)
-                        .font(.system(size: 12.5, weight: isSelected ? .bold : .medium))
-                        .foregroundStyle(isSelected ? .black : .white.opacity(0.82))
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? .white : .white.opacity(0.60))
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(
-                            isSelected ? Color(nsColor: palette.accent) : Color.white.opacity(0.08),
-                            in: .capsule
-                        )
+                        .frame(height: 26)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(.white.opacity(0.18))
+                                    .overlay {
+                                        Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 0.5)
+                                    }
+                            }
+                        }
                         .contentShape(.capsule)
+                        .help(style.subtitle)
                         .onTapGesture {
                             preferences.stageStyle = style
                         }
                 }
 
-                Divider()
-                    .frame(height: 14)
-                    .overlay(.white.opacity(0.2))
-                    .padding(.horizontal, 2)
+                Rectangle()
+                    .fill(.white.opacity(0.14))
+                    .frame(width: 0.5, height: 14)
+                    .padding(.horizontal, 4)
 
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(
+                            preferences.stageSparks
+                                ? Color(nsColor: palette.accent)
+                                : .white.opacity(0.50)
+                        )
                     Text("星火")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: preferences.stageSparks ? .semibold : .medium))
+                        .foregroundStyle(preferences.stageSparks ? .white : .white.opacity(0.55))
                 }
-                .foregroundStyle(preferences.stageSparks ? Color(nsColor: palette.accent) : .white.opacity(0.55))
                 .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    preferences.stageSparks ? Color.white.opacity(0.16) : Color.white.opacity(0.06),
-                    in: .capsule
-                )
+                .frame(height: 26)
+                .background {
+                    if preferences.stageSparks {
+                        Capsule()
+                            .fill(.white.opacity(0.14))
+                            .overlay {
+                                Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+                            }
+                    }
+                }
                 .contentShape(.capsule)
+                .help("切换星火粒子特效")
                 .onTapGesture {
                     preferences.stageSparks.toggle()
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.black.opacity(0.46), in: .capsule)
-            .overlay {
-                Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
-            }
+            .padding(4)
+            .background { hudSurface(in: Capsule()) }
         }
     }
 
-    // MARK: - Bottom Transport HUD
+    // MARK: - Bottom Corner HUD (No Full-Width Bar Background)
 
     private func bottomBar(palette: StagePalette) -> some View {
         let track = model.playback?.track ?? model.recentTracks[preferences.preferredPlayer]
-        return HStack(spacing: 14) {
-            Group {
-                if let art = activeArtwork {
-                    Image(nsImage: art)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Rectangle()
-                        .fill(.white.opacity(0.12))
-                        .overlay {
-                            Image(systemName: "music.note")
-                                .foregroundStyle(.white.opacity(0.6))
-                        }
-                }
-            }
-            .frame(width: 42, height: 42)
-            .clipShape(.rect(cornerRadius: 10))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track?.title ?? "未在播放")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(track?.artist.isEmpty == false ? track!.artist : preferences.preferredPlayer.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: 260, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 12) {
-                hudCircleButton(
-                    icon: model.isPlaying ? "pause.fill" : "play.fill",
-                    size: 34,
-                    help: model.isPlaying ? "暂停" : "播放"
-                ) {
-                    if model.playback != nil {
-                        model.togglePlayPause()
+        return HStack(alignment: .center, spacing: 12) {
+            HStack(spacing: 10) {
+                Group {
+                    if let art = activeArtwork {
+                        Image(nsImage: art)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
                     } else {
-                        model.play(preferences.preferredPlayer)
+                        Rectangle()
+                            .fill(.white.opacity(0.10))
+                            .overlay {
+                                Image(nsImage: BrandAssets.syncTemplate)
+                                    .renderingMode(.template)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 20, height: 20)
+                                    .foregroundStyle(.white.opacity(0.72))
+                            }
                     }
                 }
+                .frame(width: 38, height: 38)
+                .clipShape(.rect(cornerRadius: 9))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.32), radius: 8, y: 3)
 
-                hudCircleButton(
-                    icon: "forward.fill",
-                    size: 30,
-                    help: "下一首",
-                    action: model.nextTrack
-                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track?.title ?? "未在播放")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let artist = track?.artist, !artist.isEmpty {
+                        Text(artist)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .lineLimit(1)
+                    }
+                }
+                .shadow(color: .black.opacity(0.55), radius: 4, y: 1)
+                .frame(maxWidth: 260, alignment: .leading)
             }
+            .allowsHitTesting(false)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 16)
 
-            HStack(spacing: 6) {
-                ForEach(PlayerKind.allCases, id: \.self) { kind in
-                    let isSelected = (model.playback?.track.source ?? preferences.preferredPlayer) == kind
-                    Text(kind.displayName)
-                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(isSelected ? .white : .white.opacity(0.5))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(isSelected ? .white.opacity(0.18) : .clear, in: .capsule)
-                        .contentShape(.capsule)
-                        .onTapGesture {
-                            preferences.preferredPlayer = kind
-                            if model.playback == nil {
-                                model.play(kind)
-                            }
-                        }
+            hudCircleButton(
+                icon: model.isPlaying ? "pause.fill" : "play.fill",
+                help: model.isPlaying ? "暂停" : "播放"
+            ) {
+                if model.playback != nil {
+                    model.togglePlayPause()
+                } else {
+                    model.play(preferences.preferredPlayer)
                 }
             }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.black.opacity(0.48), in: .rect(cornerRadius: 20))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
         }
     }
 
-    private func hudCircleButton(icon: String, size: CGFloat = 28, help: String, action: @escaping () -> Void) -> some View {
+    private func hudSurface<S: InsettableShape>(in shape: S) -> some View {
+        shape
+            .fill(Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.68))
+            .overlay {
+                shape.strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+    }
+
+    private func hudCircleButton(
+        icon: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Image(systemName: icon)
-            .font(.system(size: size * 0.40, weight: .bold))
-            .foregroundStyle(.white.opacity(0.92))
-            .frame(width: size, height: size)
-            .background(.white.opacity(0.14), in: .circle)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.88))
+            .frame(width: 32, height: 32)
+            .background { hudSurface(in: Circle()) }
             .contentShape(.circle)
             .help(help)
             .onTapGesture(perform: action)

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import SoftLive
 
@@ -211,5 +212,75 @@ struct KaraokeLayerViewTests {
             hasShadow: true
         )
         #expect(view.layer?.animation(forKey: "interludeBreath") == nil)
+    }
+
+    @Test func rendersDesktopWidgetLyricsAndStageHUDViewsAcrossStates() throws {
+        let suiteName = "SoftLiveComponentRenderTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let preferences = Preferences(defaults: defaults)
+        preferences.showsDesktopWidget = true
+        preferences.showsDesktopLyrics = true
+        preferences.showsStageWindow = true
+
+        let model = PlaybackModel(sources: [])
+        let interaction = LyricsInteraction()
+        interaction.isAwake = true
+
+        let widgetHost = NSHostingView(
+            rootView: DesktopWidgetView(model: model, preferences: preferences)
+        )
+        widgetHost.frame = NSRect(origin: .zero, size: DesktopWidgetView.panelSize)
+        widgetHost.layoutSubtreeIfNeeded()
+        let widgetRep = try #require(widgetHost.bitmapImageRepForCachingDisplay(in: widgetHost.bounds))
+        widgetHost.cacheDisplay(in: widgetHost.bounds, to: widgetRep)
+        #expect(widgetRep.pixelsWide >= Int(DesktopWidgetView.panelSize.width))
+
+        let lyricsHost = NSHostingView(
+            rootView: DesktopLyricsView(model: model, preferences: preferences, interaction: interaction)
+        )
+        lyricsHost.frame = NSRect(origin: .zero, size: DesktopLyricsView.panelSize)
+        lyricsHost.layoutSubtreeIfNeeded()
+        let lyricsRep = try #require(lyricsHost.bitmapImageRepForCachingDisplay(in: lyricsHost.bounds))
+        lyricsHost.cacheDisplay(in: lyricsHost.bounds, to: lyricsRep)
+        #expect(lyricsRep.pixelsWide >= Int(DesktopLyricsView.panelSize.width))
+
+        let stageState = StageWindowState()
+        stageState.isHovered = true
+        let stageHost = NSHostingView(
+            rootView: StageWindowView(
+                model: model,
+                preferences: preferences,
+                windowState: stageState,
+                onToggleZoom: {},
+                onClose: {}
+            )
+        )
+        stageHost.frame = NSRect(origin: .zero, size: StageWindow.defaultSize)
+        stageHost.layoutSubtreeIfNeeded()
+        let stageRep = try #require(stageHost.bitmapImageRepForCachingDisplay(in: stageHost.bounds))
+        stageHost.cacheDisplay(in: stageHost.bounds, to: stageRep)
+        #expect(stageRep.pixelsWide >= Int(StageWindow.defaultSize.width))
+
+        let monitor = SystemMonitor(preferences: preferences)
+        let centerState = ControlCenterState()
+        centerState.isOpen = true
+        for section in ControlCenterSection.allCases {
+            centerState.selectedSection = section
+            let centerHost = NSHostingView(
+                rootView: ControlCenterView(
+                    model: model,
+                    monitor: monitor,
+                    preferences: preferences,
+                    state: centerState
+                )
+            )
+            centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
+            centerHost.layoutSubtreeIfNeeded()
+            let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
+            centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
+            #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+        }
     }
 }

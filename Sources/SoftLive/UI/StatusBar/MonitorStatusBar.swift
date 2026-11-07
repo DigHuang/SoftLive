@@ -7,12 +7,18 @@ import SwiftUI
 /// would otherwise replace the foreground app's menu bar and cause macOS WindowServer to
 /// reflow/teleport status bar items across the camera notch on click.
 private final class MonitorPopoverPanel: NSPanel {
+    private static let outsideDismissSuppressionWindow: Duration = .milliseconds(300)
+    private static let postShowIgnoreWindow: Duration = .milliseconds(150)
+
     var onClose: (() -> Void)?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private weak var statusBarWindow: NSWindow?
     private weak var statusBarButton: NSStatusBarButton?
     private var hostView: FirstMouseHostingView<MonitorPopoverView>?
+    private var lastShowTime: ContinuousClock.Instant?
+    private var lastOutsideDismissTime: ContinuousClock.Instant?
+    private var openingEventNumber: Int?
 
     init(rootView: MonitorPopoverView) {
         let size = MonitorPopoverView.panelSize
@@ -42,9 +48,12 @@ private final class MonitorPopoverPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    func show(below button: NSStatusBarButton) {
+    func show(below button: NSStatusBarButton, now: ContinuousClock.Instant = .now) {
         statusBarWindow = button.window
         statusBarButton = button
+        lastOutsideDismissTime = nil
+        lastShowTime = now
+        openingEventNumber = NSApp.currentEvent?.eventNumber
         let size = MonitorPopoverView.panelSize
         let margin = MonitorPopoverView.margin
         if let buttonWindow = button.window {
@@ -68,21 +77,70 @@ private final class MonitorPopoverPanel: NSPanel {
         installMonitors()
     }
 
-    func dismiss() {
+    func dismiss(fromOutsideClick: Bool = false, now: ContinuousClock.Instant = .now) {
         removeMonitors()
-        statusBarButton?.highlight(false)
+        clearButtonHighlight()
         guard isVisible else { return }
+        lastOutsideDismissTime = fromOutsideClick ? now : nil
         contentView?.isHidden = true
         orderOut(nil)
         onClose?()
+    }
+
+    func consumeRecentOutsideDismiss(now: ContinuousClock.Instant = .now) -> Bool {
+        guard let lastOutsideDismissTime else { return false }
+        self.lastOutsideDismissTime = nil
+        let isRecent = now - lastOutsideDismissTime < Self.outsideDismissSuppressionWindow
+        if isRecent {
+            clearButtonHighlight()
+        }
+        return isRecent
+    }
+
+    private func clearButtonHighlight() {
+        let button = statusBarButton
+        button?.highlight(false)
+        DispatchQueue.main.async { [weak self, weak button] in
+            if self?.isVisible != true {
+                button?.highlight(false)
+            }
+        }
+    }
+
+    private func isPointInsideCard(_ pointInWindow: NSPoint) -> Bool {
+        let margin = MonitorPopoverView.margin
+        let fromTop = frame.height - pointInWindow.y
+        let maxTop = (hostView?.activeTopHeight ?? frame.height) - margin
+        return pointInWindow.x >= margin
+            && pointInWindow.x <= frame.width - margin
+            && fromTop >= margin
+            && fromTop <= maxTop
+    }
+
+    private func isOpeningClickEvent(_ event: NSEvent, now: ContinuousClock.Instant = .now) -> Bool {
+        if let openingEventNumber, event.eventNumber == openingEventNumber {
+            return true
+        }
+        guard let lastShowTime, now - lastShowTime < Self.postShowIgnoreWindow else {
+            return false
+        }
+        if let eventWindow = event.window,
+           eventWindow === statusBarWindow || eventWindow === statusBarButton?.window {
+            return true
+        }
+        if let buttonWindow = statusBarButton?.window ?? statusBarWindow {
+            return buttonWindow.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation)
+        }
+        return false
     }
 
     private func installMonitors() {
         removeMonitors()
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            self?.dismiss()
+        ) { [weak self] event in
+            guard let self, !self.isOpeningClickEvent(event) else { return }
+            self.dismiss(fromOutsideClick: true)
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .keyDown]
@@ -103,23 +161,13 @@ private final class MonitorPopoverPanel: NSPanel {
                 self.dismiss()
                 return nil
             }
-            if let eventWindow = event.window {
-                if eventWindow === self.statusBarWindow {
-                    return event
-                }
-                if eventWindow === self {
-                    if let host = self.hostView, let activeTop = host.activeTopHeight {
-                        let pt = event.locationInWindow
-                        let fromTop = self.frame.height - pt.y
-                        if fromTop > activeTop {
-                            self.dismiss()
-                            return event
-                        }
-                    }
-                    return event
-                }
+            if self.isOpeningClickEvent(event) {
+                return event
             }
-            self.dismiss()
+            if event.window === self, self.isPointInsideCard(event.locationInWindow) {
+                return event
+            }
+            self.dismiss(fromOutsideClick: true)
             return event
         }
     }
@@ -146,17 +194,20 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if let activeTopHeight {
-            let local = convert(point, from: superview)
-            let fromTop = isFlipped ? local.y : bounds.height - local.y
-            if fromTop > activeTopHeight { return nil }
+        let local = convert(point, from: superview)
+        let fromTop = isFlipped ? local.y : bounds.height - local.y
+        let margin = MonitorPopoverView.margin
+        let maxTop = (activeTopHeight ?? bounds.height) - margin
+        if local.x < margin || local.x > bounds.width - margin || fromTop < margin || fromTop > maxTop {
+            return nil
         }
         return super.hitTest(point)
     }
 }
 
 final class MonitorStatusBar: NSObject {
-    private static let itemWidth: CGFloat = 52
+    private static let fullWidth: CGFloat = 52
+    private static let barsOnlyWidth: CGFloat = 20
     private static let itemHeight: CGFloat = 22
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 8.0, weight: .semibold)
     private static let rightParagraphStyle: NSParagraphStyle = {
@@ -203,6 +254,7 @@ final class MonitorStatusBar: NSObject {
     }
 
     struct DisplayKey: Equatable {
+        let style: MonitorStatusBarStyle
         let upText: String
         let downText: String
         let cpuBarSteps: Int
@@ -213,16 +265,23 @@ final class MonitorStatusBar: NSObject {
         let tmpBand: Int
         let pressure: MemoryPressureLevel
 
-        init(metrics: SystemMetrics) {
-            upText = SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec)
-            downText = SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec)
+        init(
+            metrics: SystemMetrics,
+            style: MonitorStatusBarStyle = .rateAndBars,
+            cpuThreshold: Double = MonitorCPUAlertThreshold.standard.fraction,
+            ramThreshold: Double = MonitorRAMAlertThreshold.standard.fraction,
+            thermalThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
+        ) {
+            self.style = style
+            upText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec) : ""
+            downText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec) : ""
             cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
             ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
             tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
-            cpuHigh = metrics.cpuUsage >= 0.75
-            ramWarning = metrics.memoryUsage >= 0.88
+            cpuHigh = metrics.cpuUsage >= cpuThreshold
+            ramWarning = metrics.memoryUsage >= ramThreshold
             let temp = metrics.temperatureCelsius ?? 0
-            tmpBand = temp >= 72 ? 2 : (temp >= 55 ? 1 : 0)
+            tmpBand = temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)
             pressure = metrics.memoryPressure
         }
     }
@@ -234,12 +293,23 @@ final class MonitorStatusBar: NSObject {
     private var observeTask: Task<Void, Never>?
     private var lastDisplayKey: DisplayKey?
 
-    init(monitor: SystemMonitor, preferences: Preferences, menu: NSMenu) {
+    init(
+        monitor: SystemMonitor,
+        preferences: Preferences,
+        menu: NSMenu,
+        onOpenSettings: (() -> Void)? = nil
+    ) {
         self.monitor = monitor
         self.menu = menu
         super.init()
 
-        let initialKey = DisplayKey(metrics: monitor.metrics)
+        let initialKey = DisplayKey(
+            metrics: monitor.metrics,
+            style: preferences.monitorStatusBarStyle,
+            cpuThreshold: preferences.monitorCPUAlertThreshold.fraction,
+            ramThreshold: preferences.monitorRAMAlertThreshold.fraction,
+            thermalThreshold: preferences.monitorThermalAlertThreshold.celsius
+        )
         lastDisplayKey = initialKey
         item.isVisible = preferences.showsSystemMonitor
         item.button?.image = Self.renderImage(for: monitor.metrics, key: initialKey)
@@ -248,7 +318,14 @@ final class MonitorStatusBar: NSObject {
         item.button?.sendAction(on: [.leftMouseDown, .rightMouseUp])
 
         let popoverPanel = MonitorPopoverPanel(
-            rootView: MonitorPopoverView(monitor: monitor)
+            rootView: MonitorPopoverView(
+                monitor: monitor,
+                preferences: preferences,
+                onOpenSettings: { [weak self] in
+                    self?.panel?.dismiss()
+                    onOpenSettings?()
+                }
+            )
         )
         popoverPanel.onClose = { [weak monitor] in
             monitor?.setDetailActive(false)
@@ -256,8 +333,15 @@ final class MonitorStatusBar: NSObject {
         self.panel = popoverPanel
 
         observeTask = Task { [weak self] in
-            for await (metrics, visible) in Observations({
-                (monitor.metrics, preferences.showsSystemMonitor)
+            for await (metrics, visible, style, cpuAlert, ramAlert, thermalAlert) in Observations({
+                (
+                    monitor.metrics,
+                    preferences.showsSystemMonitor,
+                    preferences.monitorStatusBarStyle,
+                    preferences.monitorCPUAlertThreshold.fraction,
+                    preferences.monitorRAMAlertThreshold.fraction,
+                    preferences.monitorThermalAlertThreshold.celsius
+                )
             }) {
                 guard let self else { return }
                 if self.item.isVisible != visible {
@@ -267,12 +351,44 @@ final class MonitorStatusBar: NSObject {
                     self.panel?.dismiss()
                     continue
                 }
-                let key = DisplayKey(metrics: metrics)
+                let key = DisplayKey(
+                    metrics: metrics,
+                    style: style,
+                    cpuThreshold: cpuAlert,
+                    ramThreshold: ramAlert,
+                    thermalThreshold: thermalAlert
+                )
                 guard key != self.lastDisplayKey else { continue }
                 self.lastDisplayKey = key
                 self.item.button?.image = Self.renderImage(for: metrics, key: key)
             }
         }
+    }
+
+    var isPopoverVisible: Bool {
+        panel?.isVisible ?? false
+    }
+
+    func handleLeftClick(now: ContinuousClock.Instant = .now) {
+        guard let button = item.button, let panel else { return }
+        if panel.isVisible {
+            panel.dismiss(now: now)
+        } else if panel.consumeRecentOutsideDismiss(now: now) {
+            return
+        } else {
+            monitor.setDetailActive(true)
+            panel.show(below: button, now: now)
+        }
+    }
+
+    func dismissFromOutsideClick(now: ContinuousClock.Instant = .now) {
+        panel?.dismiss(fromOutsideClick: true, now: now)
+    }
+
+    isolated deinit {
+        observeTask?.cancel()
+        panel?.dismiss()
+        NSStatusBar.system.removeStatusItem(item)
     }
 
     @objc private func statusItemClicked() {
@@ -283,55 +399,50 @@ final class MonitorStatusBar: NSObject {
             menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
             return
         }
-        guard let button = item.button, let panel else { return }
-        if panel.isVisible {
-            panel.dismiss()
-        } else {
-            monitor.setDetailActive(true)
-            panel.show(below: button)
-        }
+        handleLeftClick()
     }
 
-    static func renderImage(for metrics: SystemMetrics) -> NSImage {
-        renderImage(for: metrics, key: DisplayKey(metrics: metrics))
+    static func renderImage(
+        for metrics: SystemMetrics,
+        style: MonitorStatusBarStyle = .rateAndBars
+    ) -> NSImage {
+        renderImage(for: metrics, key: DisplayKey(metrics: metrics, style: style))
     }
 
     private static func renderImage(for metrics: SystemMetrics, key: DisplayKey) -> NSImage {
-        let size = NSSize(width: itemWidth, height: itemHeight)
+        let width = key.style == .rateAndBars ? fullWidth : barsOnlyWidth
+        let size = NSSize(width: width, height: itemHeight)
         let image = NSImage(size: size, flipped: true) { _ in
-            let rightAttributes: [NSAttributedString.Key: Any] = [
-                .font: rateFont,
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: rightParagraphStyle,
-            ]
-            // 1. Left column (0...33 pt): clean two-line right-aligned upload / download rates (no arrows)
-            (key.upText as NSString).draw(
-                in: NSRect(x: 0, y: 1.5, width: 33, height: 10),
-                withAttributes: rightAttributes
-            )
-            (key.downText as NSString).draw(
-                in: NSRect(x: 0, y: 11.0, width: 33, height: 10),
-                withAttributes: rightAttributes
-            )
+            if key.style == .rateAndBars {
+                let rightAttributes: [NSAttributedString.Key: Any] = [
+                    .font: rateFont,
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: rightParagraphStyle,
+                ]
+                (key.upText as NSString).draw(
+                    in: NSRect(x: 0, y: 1.5, width: 33, height: 10),
+                    withAttributes: rightAttributes
+                )
+                (key.downText as NSString).draw(
+                    in: NSRect(x: 0, y: 11.0, width: 33, height: 10),
+                    withAttributes: rightAttributes
+                )
+            }
 
-            // 2. Right column (39.0...52.0 pt, 6.0 pt gap from text): 3 semantic colored vertical bars (CPU / RAM / TMP, each 0...100)
-            let cpuColor = metrics.cpuUsage >= 0.75 ? cpuOrange : cpuCyan
+            let cpuColor = key.cpuHigh ? cpuOrange : cpuCyan
             let ramColor: NSColor = switch metrics.memoryPressure {
             case .critical: ramCoral
             case .warning: ramAmber
-            case .normal: metrics.memoryUsage >= 0.88 ? ramAmber : ramEmerald
+            case .normal: key.ramWarning ? ramAmber : ramEmerald
             }
-            let temp = metrics.temperatureCelsius ?? 0
-            let tmpColor: NSColor = if temp >= 72 {
-                ramCoral
-            } else if temp >= 55 {
-                ramAmber
-            } else {
-                tmpTeal
+            let tmpColor: NSColor = switch key.tmpBand {
+            case 2: ramCoral
+            case 1: ramAmber
+            default: tmpTeal
             }
 
             drawVerticalBars(
-                originX: 39.0,
+                originX: key.style == .rateAndBars ? 39.0 : 3.5,
                 originY: 2.5,
                 barWidth: 3.0,
                 barHeight: 17,

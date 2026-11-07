@@ -25,9 +25,9 @@ enum DesktopWidget {
     }
 }
 
-private struct DesktopWidgetView: View {
-    static let cardWidth: CGFloat = 360
-    static let expandedHeight: CGFloat = 146
+struct DesktopWidgetView: View {
+    static let cardWidth: CGFloat = 368
+    static let expandedHeight: CGFloat = 154
     static let compactHeight: CGFloat = 88
     static let innerPadding: CGFloat = 16
     /// Room around the card for the glass rim and shadow.
@@ -39,6 +39,8 @@ private struct DesktopWidgetView: View {
     let model: PlaybackModel
     let preferences: Preferences
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         if !preferences.showsDesktopWidget {
             Color.clear.frame(width: 0, height: 0)
@@ -47,15 +49,30 @@ private struct DesktopWidgetView: View {
             let isExpanded = playback != nil
             let selected = preferences.preferredPlayer
             let recent = model.recentTracks[selected]
+            let activeImage = playback != nil ? model.artwork : model.recentArtworks[selected]
+            let palette = StagePalette.cached(for: activeImage)
+            let accent = Color(nsColor: palette.accent)
 
             VStack(alignment: .leading, spacing: 0) {
-                header(playback: playback, selected: selected, recent: recent)
-                    .frame(height: 56)
+                header(
+                    playback: playback,
+                    selected: selected,
+                    recent: recent,
+                    artwork: activeImage,
+                    accent: accent
+                )
+                .frame(height: 56)
 
                 if playback != nil {
+                    Rectangle()
+                        .fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
+                        .frame(height: 0.5)
+                        .padding(.top, 9)
+                        .padding(.bottom, 7)
+                        .allowsHitTesting(false)
+
                     lyrics
                         .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
-                        .padding(.top, 10)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
@@ -64,8 +81,7 @@ private struct DesktopWidgetView: View {
             .frame(width: Self.cardWidth, height: isExpanded ? Self.expandedHeight : Self.compactHeight, alignment: .top)
             .clipped()
             .background {
-                Color.clear
-                    .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                cardSurface(palette: palette, hasArtwork: activeImage != nil)
                     .contentShape(.rect(cornerRadius: 24))
                     .onTapGesture(count: 2) {
                         if playback != nil { model.nextTrack() }
@@ -80,36 +96,90 @@ private struct DesktopWidgetView: View {
         }
     }
 
-    // MARK: Header
+    // MARK: - Artwork Aura + Frost Glass Surface
 
-    private func header(playback: PlaybackState?, selected: PlayerKind, recent: Track?) -> some View {
+    private func cardSurface(palette: StagePalette, hasArtwork: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        let isDark = colorScheme == .dark
+        let primaryGlow = Color(nsColor: palette.accent)
+        let secondaryGlow = Color(nsColor: palette.orbSecondary)
+
+        return ZStack {
+            shape.fill(
+                isDark
+                    ? Color(red: 0.06, green: 0.08, blue: 0.13).opacity(0.46)
+                    : Color.white.opacity(0.52)
+            )
+
+            if hasArtwork {
+                LinearGradient(
+                    colors: [
+                        primaryGlow.opacity(isDark ? 0.24 : 0.16),
+                        secondaryGlow.opacity(isDark ? 0.14 : 0.09),
+                        .clear,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(shape)
+            }
+
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+
+            shape.strokeBorder(
+                isDark ? Color.white.opacity(0.15) : Color.white.opacity(0.62),
+                lineWidth: 0.5
+            )
+        }
+    }
+
+    // MARK: - Header
+
+    private func header(
+        playback: PlaybackState?,
+        selected: PlayerKind,
+        recent: Track?,
+        artwork: NSImage?,
+        accent: Color
+    ) -> some View {
         HStack(spacing: 12) {
-            Artwork(image: playback != nil ? model.artwork : model.recentArtworks[selected])
-                .frame(width: 52, height: 52)
-                .clipShape(.rect(cornerRadius: 11))
+            Artwork(image: artwork)
+                .frame(width: 54, height: 54)
+                .clipShape(.rect(cornerRadius: 12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 5, y: 2)
                 .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: playback != nil ? 2 : 4) {
+            VStack(alignment: .leading, spacing: playback != nil ? 3 : 4) {
                 Text(playback?.track.title ?? recent?.title ?? "未在播放")
-                    .font(playback != nil ? .subheadline.weight(.semibold) : .headline)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
                 Text(subtitle(playback: playback, selected: selected, recent: recent))
-                    .font(playback != nil ? .caption : .subheadline)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                 if playback != nil {
-                    PlaybackProgress(model: model, isActive: preferences.showsDesktopWidget)
-                        .padding(.top, 2)
-                        .transition(.opacity)
+                    PlaybackProgress(
+                        model: model,
+                        accent: accent,
+                        isActive: preferences.showsDesktopWidget
+                    )
+                    .padding(.top, 2)
+                    .transition(.opacity)
                 }
             }
             .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
-
-            Spacer(minLength: 0)
 
             if playback != nil {
                 HStack(spacing: 8) {
                     circleButton(
                         icon: model.isPlaying ? "pause.fill" : "play.fill",
+                        isProminent: true,
                         help: model.isPlaying ? "暂停" : "继续播放",
                         action: model.togglePlayPause
                     )
@@ -120,23 +190,8 @@ private struct DesktopWidgetView: View {
                     )
                 }
             } else {
-                VStack(alignment: .trailing, spacing: 8) {
-                    Button {
-                        model.play(selected)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 10, weight: .bold))
-                            Text("播放")
-                                .font(.caption.weight(.semibold))
-                        }
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 6)
-                        .background(.white.opacity(0.2), in: .capsule)
-                        .contentShape(.capsule)
-                    }
-                    .buttonStyle(.plain)
-
+                VStack(alignment: .trailing, spacing: 6) {
+                    playPillButton(selected: selected)
                     playerIconBar(selected: selected)
                 }
             }
@@ -151,34 +206,95 @@ private struct DesktopWidgetView: View {
         return selected.displayName
     }
 
-    private func circleButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 28, height: 28)
-                .background(.white.opacity(0.2), in: .circle)
-                .contentShape(.circle)
+    private var controlFill: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.14)
+            : Color(red: 0.08, green: 0.12, blue: 0.20).opacity(0.08)
+    }
+
+    private var prominentControlFill: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.22)
+            : Color(red: 0.08, green: 0.12, blue: 0.20).opacity(0.13)
+    }
+
+    private var controlBorder: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.16)
+            : Color.black.opacity(0.08)
+    }
+
+    private func circleButton(
+        icon: String,
+        isProminent: Bool = false,
+        isSubtle: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: isSubtle ? 9.5 : 10.5, weight: .bold))
+            .foregroundStyle(isSubtle ? .secondary : .primary)
+            .frame(width: 28, height: 28)
+            .background(
+                isProminent ? prominentControlFill : (isSubtle ? .clear : controlFill),
+                in: .circle
+            )
+            .overlay {
+                if !isSubtle {
+                    Circle().strokeBorder(controlBorder, lineWidth: 0.5)
+                }
+            }
+            .contentShape(.circle)
+            .help(help)
+            .onTapGesture(perform: action)
+    }
+
+    private func playPillButton(selected: PlayerKind) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "play.fill")
+                .font(.system(size: 10, weight: .bold))
+            Text("播放")
+                .font(.system(size: 12, weight: .semibold))
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(prominentControlFill, in: .capsule)
+        .overlay {
+            Capsule().strokeBorder(controlBorder, lineWidth: 0.5)
+        }
+        .contentShape(.capsule)
+        .help("启动 \(selected.displayName) 并播放")
+        .onTapGesture {
+            model.play(selected)
+        }
     }
 
     private func playerIconBar(selected: PlayerKind) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(PlayerKind.allCases, id: \.self) { kind in
                 let isSelected = selected == kind
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        preferences.preferredPlayer = kind
+                PlayerIcon(kind: kind)
+                    .frame(width: 20, height: 20)
+                    .frame(width: 28, height: 28)
+                    .opacity(isSelected ? 1.0 : 0.42)
+                    .background(
+                        isSelected ? controlFill : .clear,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .overlay {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(controlBorder, lineWidth: 0.5)
+                        }
                     }
-                } label: {
-                    PlayerIcon(kind: kind)
-                        .frame(width: 24, height: 24)
-                        .opacity(isSelected ? 1.0 : 0.35)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help(kind.displayName)
+                    .contentShape(Rectangle())
+                    .help(kind.displayName)
+                    .onTapGesture {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            preferences.preferredPlayer = kind
+                        }
+                    }
             }
         }
     }
@@ -194,10 +310,16 @@ private struct DesktopWidgetView: View {
                     weight: .bold
                 )
                 if let sub = model.subline, !sub.isEmpty {
-                    Text(sub).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(sub)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             } else if let sub = model.subline, !sub.isEmpty {
-                Text(sub).font(.subheadline.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                Text(sub)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
     }
@@ -237,9 +359,10 @@ private struct Artwork: View {
 }
 
 private struct PlaybackProgress: View {
-    private static let barWidth: CGFloat = 68
+    private static let barWidth: CGFloat = 78
 
     let model: PlaybackModel
+    let accent: Color
     let isActive: Bool
 
     var body: some View {
@@ -248,17 +371,17 @@ private struct PlaybackProgress: View {
         TimelineView(ProgressSchedule(until: isActive && model.isPlaying && duration > 0 ? .now + remaining : .now)) { context in
             let position = min(model.playback?.position(at: context.date) ?? 0, duration)
             let fraction = duration > 0 ? min(max(position / duration, 0), 1) : 0
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Capsule()
                     .fill(.quaternary)
-                    .frame(width: Self.barWidth, height: 3)
+                    .frame(width: Self.barWidth, height: 3.5)
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(.secondary)
-                            .frame(width: Self.barWidth * fraction, height: 3)
+                            .fill(accent)
+                            .frame(width: max(3.5, Self.barWidth * fraction), height: 3.5)
                     }
                 Text("\(Self.format(position)) / \(Self.format(duration))")
-                    .font(.caption2.monospacedDigit())
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
         }
