@@ -34,8 +34,8 @@ SoftLive 首个版本：提供 macOS 状态栏、桌面悬浮窗、桌面组件�
 - **YRC 词间空格与游标对齐**：归并 YRC 词间独立空白分词并保持整行文本与分词 UTF-16 长度一致，修复含行首空格或英文分词时的逐字高亮偏移。([#8], [#9])
 - **系统采样边界修复**：补齐 `AppleSMC` `SMCKeyData_t` 80 字节结构体对齐填充，通过 `KERN_PROCARGS2` 与工作目录区分通用宿主进程（如 `node` / `next-server`），并过滤 `utun*` 虚拟网卡重复流量与 `tcal` 固定校准温度项。([#5], [#7], [#8])
 
-[Unreleased]: https://github.com/DigHuang/SoftLive/compare/HEAD...main
-[0.0.1]: https://github.com/DigHuang/SoftLive/commits/main
+[Unreleased]: https://github.com/DigHuang/SoftLive/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/DigHuang/SoftLive/releases/tag/v0.0.1
 [#1]: https://github.com/DigHuang/SoftLive/pull/1
 [#2]: https://github.com/DigHuang/SoftLive/pull/2
 [#5]: https://github.com/DigHuang/SoftLive/pull/5
