@@ -268,6 +268,7 @@ struct KaraokeLayerViewTests {
         centerState.isOpen = true
         for lang in [AppLanguage.zhHans, .en] {
             preferences.language = lang
+            var firstCardTopRows: [ControlCenterSection: Int] = [:]
             for section in ControlCenterSection.allCases {
                 centerState.selectedSection = section
                 let centerHost = NSHostingView(
@@ -280,10 +281,23 @@ struct KaraokeLayerViewTests {
                 )
                 centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
                 centerHost.layoutSubtreeIfNeeded()
+                #expect(centerHost.fittingSize == ControlCenterWindow.windowSize)
                 let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
                 centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
                 #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+
+                let probeX = Int( CGFloat(centerRep.pixelsWide) * 0.55 )
+                let bgColor = try #require(centerRep.colorAt(x: probeX, y: 4))
+                let firstCardRow = try #require((0..<centerRep.pixelsHigh).first { y in
+                    guard let c = centerRep.colorAt(x: probeX, y: y) else { return false }
+                    return abs(c.redComponent - bgColor.redComponent) > 0.015
+                        || abs(c.greenComponent - bgColor.greenComponent) > 0.015
+                        || abs(c.blueComponent - bgColor.blueComponent) > 0.015
+                })
+                firstCardTopRows[section] = firstCardRow
             }
+            #expect(firstCardTopRows[.player] == firstCardTopRows[.monitor])
+            #expect(firstCardTopRows[.player] == firstCardTopRows[.about])
         }
     }
 
