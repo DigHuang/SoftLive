@@ -3,7 +3,7 @@
 ## 职责与事实来源
 
 - 界面读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift)、[`SystemMonitor`](../../Sources/SoftLive/Monitor/SystemMonitor.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，通过模型方法发起播放控制、详情采样选择与结束进程；不直接访问播放器存储、采样器或网络。独立舞台的排版与特效见 [舞台模式](stage.md)。
-- [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是共享主菜单，两个状态栏项及右键桌面歌词/组件/舞台窗口均可访问；再次打开 App、点击菜单「配置中心… (`⌘,`)」或点击监控面板底栏设置图标可打开 [`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift)。
+- [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 提供精简的右键快捷菜单（仅保留曲目短标题、桌面歌词/锁定/桌面组件/演示舞台开关、`歌词偏移` 子菜单、「配置中心… (`⌘,`)」与「退出 (`⌘Q`)」，两个状态栏项及桌面歌词/组件/舞台窗口右键均可访问）以及应用级 `NSApp.mainMenu`（使 `ControlCenterWindow` 与 `StageWindow` 聚焦时原生支持 `⌘Q` 退出、`⌘W` 关闭窗口、`⌘M` 最小化与 `⌘,` 打开配置中心）；再次打开 App、点击菜单「配置中心… (`⌘,`)」或点击监控面板底栏设置图标可打开 [`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift)。
 - [`L10n`](../../Sources/SoftLive/Support/L10n.swift) 提供零依赖、编译期安全的中英双语（`zh-Hans` / `en`）本地化，由 `Preferences.language`（`跟随系统 / 简体中文 / English`）驱动；切换时通过 `@Observable` 自动刷新 SwiftUI 面板、CoreText 舞台/歌词占位与 `AppMenu`，无需重启 App。[`build-app.sh`](../../Scripts/build-app.sh) 同时将 `Resources/{zh-Hans,en}.lproj/InfoPlist.strings` 拷入应用包，本地化系统自动化授权弹窗。
 
 ## 应用图标与打包
