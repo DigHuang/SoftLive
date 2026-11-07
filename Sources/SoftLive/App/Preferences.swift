@@ -8,15 +8,15 @@ enum StageStyle: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .luminous: "流光"
-        case .inkTrace: "描金"
+        case .luminous: L10n.tr("流光", "Luminous")
+        case .inkTrace: L10n.tr("描金", "Ink Trace")
         }
     }
 
     var subtitle: String {
         switch self {
-        case .luminous: "3D 飞散弹射 · 十字星芒与冲击环"
-        case .inkTrace: "霓虹笔画激光 · 残影重影与几何爆闪"
+        case .luminous: L10n.tr("3D 飞散弹射 · 十字星芒与冲击环", "3D scatter bounce · Cross starbursts & shockwave rings")
+        case .inkTrace: L10n.tr("霓虹笔画激光 · 残影重影与几何爆闪", "Neon stroke laser · Ghost echoes & geometric flash")
         }
     }
 }
@@ -58,9 +58,9 @@ enum DesktopLyricsSublineMode: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .translationThenNext: "翻译优先"
-        case .translationOnly: "仅翻译"
-        case .singleLine: "单行"
+        case .translationThenNext: L10n.tr("翻译优先", "Trans. First")
+        case .translationOnly: L10n.tr("仅翻译", "Trans. Only")
+        case .singleLine: L10n.tr("单行", "Single Line")
         }
     }
 }
@@ -93,8 +93,8 @@ enum MonitorStatusBarStyle: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .rateAndBars: "网速 + 柱状图"
-        case .barsOnly: "仅柱状图"
+        case .rateAndBars: L10n.tr("网速 + 柱状图", "Speed + Bars")
+        case .barsOnly: L10n.tr("仅柱状图", "Bars Only")
         }
     }
 }
@@ -106,9 +106,9 @@ enum MonitorSampleInterval: Double, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .fast: "1 秒"
-        case .standard: "2 秒"
-        case .eco: "5 秒"
+        case .fast: L10n.tr("1 秒", "1s")
+        case .standard: L10n.tr("2 秒", "2s")
+        case .eco: L10n.tr("5 秒", "5s")
         }
     }
 }
@@ -163,6 +163,12 @@ final class Preferences {
     var monitorCPUAlertThreshold: MonitorCPUAlertThreshold { didSet { defaults.set(monitorCPUAlertThreshold.rawValue, forKey: Key.monitorCPUAlert) } }
     var monitorRAMAlertThreshold: MonitorRAMAlertThreshold { didSet { defaults.set(monitorRAMAlertThreshold.rawValue, forKey: Key.monitorRAMAlert) } }
     var monitorThermalAlertThreshold: MonitorThermalAlertThreshold { didSet { defaults.set(monitorThermalAlertThreshold.rawValue, forKey: Key.monitorThermalAlert) } }
+    var language: AppLanguage {
+        didSet {
+            defaults.set(language.rawValue, forKey: Key.language)
+            L10n.language = language
+        }
+    }
 
     private enum Key {
         static let statusBar = "showsStatusBarLyrics"
@@ -184,6 +190,7 @@ final class Preferences {
         static let monitorCPUAlert = "monitorCPUAlertThreshold"
         static let monitorRAMAlert = "monitorRAMAlertThreshold"
         static let monitorThermalAlert = "monitorThermalAlertThreshold"
+        static let language = "appLanguage"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -210,6 +217,7 @@ final class Preferences {
             Key.monitorCPUAlert: MonitorCPUAlertThreshold.standard.rawValue,
             Key.monitorRAMAlert: MonitorRAMAlertThreshold.standard.rawValue,
             Key.monitorThermalAlert: MonitorThermalAlertThreshold.standard.rawValue,
+            Key.language: AppLanguage.system.rawValue,
         ])
         showsStatusBarLyrics = defaults.bool(forKey: Key.statusBar)
         showsSystemMonitor = defaults.bool(forKey: Key.monitor)
@@ -231,5 +239,8 @@ final class Preferences {
         monitorCPUAlertThreshold = MonitorCPUAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorCPUAlert)) ?? .standard
         monitorRAMAlertThreshold = MonitorRAMAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorRAMAlert)) ?? .standard
         monitorThermalAlertThreshold = MonitorThermalAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorThermalAlert)) ?? .standard
+        let resolvedLanguage = defaults.string(forKey: Key.language).flatMap(AppLanguage.init(rawValue:)) ?? .system
+        language = resolvedLanguage
+        L10n.language = resolvedLanguage
     }
 }

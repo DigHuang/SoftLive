@@ -253,9 +253,9 @@ struct MonitorPopoverView: View {
                                 }
                             }
                             HStack(spacing: 8) {
-                                Text("用户 \(SystemMetrics.formatPercentage(d.userUsage))")
-                                Text("系统 \(SystemMetrics.formatPercentage(d.systemUsage))")
-                                Text(String(format: "负载 %.2f", d.loadAverage1m))
+                                Text(L10n.tr("用户 \(SystemMetrics.formatPercentage(d.userUsage))", "User \(SystemMetrics.formatPercentage(d.userUsage))"))
+                                Text(L10n.tr("系统 \(SystemMetrics.formatPercentage(d.systemUsage))", "Sys \(SystemMetrics.formatPercentage(d.systemUsage))"))
+                                Text(String(format: L10n.tr("负载 %.2f", "Load %.2f"), d.loadAverage1m))
                             }
                             .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -275,8 +275,8 @@ struct MonitorPopoverView: View {
             hudCard {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 10) {
-                        clusterLegend(color: MonitorPalette.cyan, label: "能效 E", value: d.efficiencyUsage)
-                        clusterLegend(color: MonitorPalette.indigo, label: "性能 P", value: d.performanceUsage)
+                        clusterLegend(color: MonitorPalette.cyan, label: L10n.tr("能效 E", "Eff E"), value: d.efficiencyUsage)
+                        clusterLegend(color: MonitorPalette.indigo, label: L10n.tr("性能 P", "Perf P"), value: d.performanceUsage)
                         Spacer()
                         clusterLegend(color: MonitorPalette.purple, label: "GPU", value: d.gpuUsage)
                     }
@@ -308,7 +308,7 @@ struct MonitorPopoverView: View {
 
             // Top 10 CPU Processes Card (with inline Kill button)
             processListCard(
-                title: "高占用进程 Top 10 (CPU)",
+                title: L10n.tr("高占用进程 Top 10 (CPU)", "Top 10 CPU Processes"),
                 processes: d.topProcesses,
                 barColor: accent
             )
@@ -364,7 +364,7 @@ struct MonitorPopoverView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text("物理内存")
+                                Text(L10n.tr("物理内存", "Physical Memory"))
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.primary)
                                 Text(d.pressure.label)
@@ -374,7 +374,10 @@ struct MonitorPopoverView: View {
                                     .padding(.vertical, 1.5)
                                     .background(badgeColor.opacity(0.14), in: Capsule())
                             }
-                            Text("已用 \(SystemMetrics.formatBytes(d.usedBytes)) / \(SystemMetrics.formatBytes(d.totalBytes)) · 可用 \(SystemMetrics.formatBytes(d.freeBytes))")
+                            Text(L10n.tr(
+                                "已用 \(SystemMetrics.formatBytes(d.usedBytes)) / \(SystemMetrics.formatBytes(d.totalBytes)) · 可用 \(SystemMetrics.formatBytes(d.freeBytes))",
+                                "Used \(SystemMetrics.formatBytes(d.usedBytes)) / \(SystemMetrics.formatBytes(d.totalBytes)) · Free \(SystemMetrics.formatBytes(d.freeBytes))"
+                            ))
                                 .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
@@ -418,9 +421,9 @@ struct MonitorPopoverView: View {
                     HStack(spacing: 0) {
                         ramLegendPill(color: MonitorPalette.cyan, title: "App", bytes: d.appBytes)
                         Spacer(minLength: 4)
-                        ramLegendPill(color: MonitorPalette.indigo, title: "联动", bytes: d.wiredBytes)
+                        ramLegendPill(color: MonitorPalette.indigo, title: L10n.tr("联动", "Wired"), bytes: d.wiredBytes)
                         Spacer(minLength: 4)
-                        ramLegendPill(color: MonitorPalette.teal, title: "压缩", bytes: d.compressedBytes)
+                        ramLegendPill(color: MonitorPalette.teal, title: L10n.tr("压缩", "Comp."), bytes: d.compressedBytes)
                         Spacer(minLength: 4)
                         ramLegendPill(
                             color: d.swapUsedBytes > 1_073_741_824 ? MonitorPalette.coral : .secondary,
@@ -433,7 +436,7 @@ struct MonitorPopoverView: View {
 
             // Top 10 Memory Hogs Card (with inline Kill button)
             processListCard(
-                title: "内存大户排行 Top 10 (Phys Footprint)",
+                title: L10n.tr("内存大户排行 Top 10 (Phys Footprint)", "Top 10 Memory Processes"),
                 processes: d.topProcesses,
                 barColor: accent
             )
@@ -465,17 +468,22 @@ struct MonitorPopoverView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text("SoC 核心温度")
+                                Text(L10n.tr("SoC 核心温度", "SoC Temperature"))
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.primary)
+                                    .lineLimit(1)
                                 Text(thermalStateText(metrics.temperatureCelsius))
                                     .font(.system(size: 9.5, weight: .bold))
                                     .foregroundStyle(accent)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 1.5)
                                     .background(accent.opacity(0.14), in: Capsule())
+                                    .lineLimit(1)
                             }
-                            Text("峰值 \(SystemMetrics.formatTemperatureDetail(d.maxDieCelsius)) · 最低 \(SystemMetrics.formatTemperatureDetail(d.minDieCelsius))")
+                            Text(L10n.tr(
+                                "峰值 \(SystemMetrics.formatTemperatureDetail(d.maxDieCelsius)) · 最低 \(SystemMetrics.formatTemperatureDetail(d.minDieCelsius))",
+                                "Peak \(SystemMetrics.formatTemperatureDetail(d.maxDieCelsius)) · Min \(SystemMetrics.formatTemperatureDetail(d.minDieCelsius))"
+                            ))
                                 .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
@@ -500,7 +508,7 @@ struct MonitorPopoverView: View {
                             .frame(width: 26, height: 26)
                             .background(MonitorPalette.amber.opacity(0.14), in: Circle())
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("整机功耗")
+                            Text(L10n.tr("整机功耗", "System Power"))
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                             Text(SystemMetrics.formatWatts(d.systemPowerWatts))
@@ -519,7 +527,7 @@ struct MonitorPopoverView: View {
                             .frame(width: 26, height: 26)
                             .background(MonitorPalette.cyan.opacity(0.14), in: Circle())
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("散热风扇")
+                            Text(L10n.tr("散热风扇", "Cooling Fan"))
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                             Text(formatFan(d))
@@ -536,15 +544,15 @@ struct MonitorPopoverView: View {
             // 5 Subsystem Thermal Distribution Bars (0 ~ 100 °C)
             hudCard {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("硬件关键部位热力分布 (0 ~ 100 °C)")
+                    Text(L10n.tr("硬件关键部位热力分布 (0 ~ 100 °C)", "Hardware Thermal Zones (0 ~ 100 °C)"))
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.secondary)
 
-                    thermalZoneBar(label: "SoC 性能核峰值", celsius: d.maxDieCelsius)
-                    thermalZoneBar(label: "SoC 核心均值", celsius: metrics.temperatureCelsius)
-                    thermalZoneBar(label: "主板与供电 (PMU)", celsius: d.boardAverageCelsius)
-                    thermalZoneBar(label: "SSD 固态闪存 (NAND)", celsius: d.nandCelsius)
-                    thermalZoneBar(label: "智能电池 (Battery)", celsius: d.batteryCelsius)
+                    thermalZoneBar(label: L10n.tr("SoC 性能核峰值", "SoC P-Core Peak"), celsius: d.maxDieCelsius)
+                    thermalZoneBar(label: L10n.tr("SoC 核心均值", "SoC Die Average"), celsius: metrics.temperatureCelsius)
+                    thermalZoneBar(label: L10n.tr("主板与供电 (PMU)", "Logic Board (PMU)"), celsius: d.boardAverageCelsius)
+                    thermalZoneBar(label: L10n.tr("SSD 固态闪存 (NAND)", "SSD Storage (NAND)"), celsius: d.nandCelsius)
+                    thermalZoneBar(label: L10n.tr("智能电池 (Battery)", "Smart Battery"), celsius: d.batteryCelsius)
                 }
             }
         }
@@ -579,10 +587,10 @@ struct MonitorPopoverView: View {
     }
 
     private func thermalStateText(_ celsius: Double?) -> String {
-        guard let celsius else { return "传感器就绪" }
-        if celsius >= 80 { return "高温降频预警" }
-        if celsius >= 60 { return "高负载温升" }
-        return "热状态正常"
+        guard let celsius else { return L10n.tr("传感器就绪", "Sensors Ready") }
+        if celsius >= 80 { return L10n.tr("高温降频预警", "Thermal Throttling") }
+        if celsius >= 60 { return L10n.tr("高负载温升", "Warm Under Load") }
+        return L10n.tr("热状态正常", "Nominal")
     }
 
     // MARK: - Top 10 Process List Card (with Direct Kill Button)
@@ -601,7 +609,7 @@ struct MonitorPopoverView: View {
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(confirmingPID != nil ? "再次点击红色按钮确认结束" : "点击 ✕ 结束进程")
+                    Text(confirmingPID != nil ? L10n.tr("再次点击红色按钮确认结束", "Click red button to confirm") : L10n.tr("点击 ✕ 结束进程", "Click ✕ to quit process"))
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(confirmingPID != nil ? MonitorPalette.coral : .secondary.opacity(0.8))
                 }
@@ -649,7 +657,7 @@ struct MonitorPopoverView: View {
 
                             if canKill {
                                 if isConfirming {
-                                    Text("结束")
+                                    Text(L10n.tr("结束", "Quit"))
                                         .font(.system(size: 9.5, weight: .bold))
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 6)
@@ -722,7 +730,7 @@ struct MonitorPopoverView: View {
                 Circle()
                     .fill(MonitorPalette.cyan)
                     .frame(width: 5, height: 5)
-                Text("上传 \(SystemMetrics.formatRate(metrics.uploadBytesPerSec))")
+                Text(L10n.tr("上传 \(SystemMetrics.formatRate(metrics.uploadBytesPerSec))", "Up \(SystemMetrics.formatRate(metrics.uploadBytesPerSec))"))
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -730,7 +738,7 @@ struct MonitorPopoverView: View {
                 Circle()
                     .fill(MonitorPalette.emerald)
                     .frame(width: 5, height: 5)
-                Text("下载 \(SystemMetrics.formatRate(metrics.downloadBytesPerSec))")
+                Text(L10n.tr("下载 \(SystemMetrics.formatRate(metrics.downloadBytesPerSec))", "Down \(SystemMetrics.formatRate(metrics.downloadBytesPerSec))"))
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -742,7 +750,7 @@ struct MonitorPopoverView: View {
                     .frame(width: 22, height: 18)
                     .background(trackColor, in: Capsule())
                     .contentShape(Rectangle())
-                    .help("打开监听配置中心")
+                    .help(L10n.tr("打开监听配置中心", "Open Monitor Settings"))
                     .onTapGesture(perform: onOpenSettings)
             }
         }
@@ -786,10 +794,10 @@ struct MonitorPopoverView: View {
 
     private func formatFan(_ details: ThermalDetails) -> String {
         guard let rpm = details.fanRPM else {
-            return "被动散热"
+            return L10n.tr("被动散热", "Fanless")
         }
         if rpm < 50 {
-            return "0 RPM (停转)"
+            return L10n.tr("0 RPM (停转)", "0 RPM (Idle)")
         }
         if let maxRPM = details.fanMaxRPM, maxRPM > 0 {
             let pct = Int((Double(rpm) / Double(maxRPM) * 100).rounded())

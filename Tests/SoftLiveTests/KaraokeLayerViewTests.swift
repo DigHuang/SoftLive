@@ -266,21 +266,69 @@ struct KaraokeLayerViewTests {
         let monitor = SystemMonitor(preferences: preferences)
         let centerState = ControlCenterState()
         centerState.isOpen = true
-        for section in ControlCenterSection.allCases {
-            centerState.selectedSection = section
-            let centerHost = NSHostingView(
-                rootView: ControlCenterView(
-                    model: model,
-                    monitor: monitor,
-                    preferences: preferences,
-                    state: centerState
+        for lang in [AppLanguage.zhHans, .en] {
+            preferences.language = lang
+            for section in ControlCenterSection.allCases {
+                centerState.selectedSection = section
+                let centerHost = NSHostingView(
+                    rootView: ControlCenterView(
+                        model: model,
+                        monitor: monitor,
+                        preferences: preferences,
+                        state: centerState
+                    )
                 )
-            )
-            centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
-            centerHost.layoutSubtreeIfNeeded()
-            let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
-            centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
-            #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+                centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
+                centerHost.layoutSubtreeIfNeeded()
+                let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
+                centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
+                #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+            }
         }
+    }
+
+    @Test func switchesLanguageAcrossPreferencesMenuAndModelsWithoutRestart() throws {
+        let suiteName = "SoftLiveL10nTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            L10n.language = .system
+        }
+
+        #expect(AppLanguage.system.resolved(preferredLanguages: ["zh-Hans-CN", "en-US"]) == .zhHans)
+        #expect(AppLanguage.system.resolved(preferredLanguages: ["en-US", "zh-Hans-CN"]) == .en)
+        #expect(AppLanguage.system.resolved(preferredLanguages: ["ja-JP", "en-US"]) == .en)
+        #expect(AppLanguage.system.resolved(preferredLanguages: ["fr-FR"]) == .zhHans)
+
+        let preferences = Preferences(defaults: defaults)
+        #expect(preferences.language == .system)
+
+        preferences.language = .en
+        #expect(defaults.string(forKey: "appLanguage") == "en")
+        #expect(L10n.isEnglish)
+        #expect(PlayerKind.netEase.displayName == "NetEase Music")
+        #expect(StageStyle.luminous.displayName == "Luminous")
+        #expect(ControlCenterSection.player.title == "Player")
+
+        let model = PlaybackModel(sources: [])
+        let appMenu = AppMenu(model: model, preferences: preferences)
+        appMenu.menuNeedsUpdate(appMenu.menu)
+        let enTitles = appMenu.menu.items.map(\.title)
+        #expect(enTitles.contains("Control Center…"))
+        #expect(enTitles.contains("Language (English)"))
+        #expect(enTitles.contains("Quit SoftLive"))
+
+        preferences.language = .zhHans
+        #expect(defaults.string(forKey: "appLanguage") == "zh-Hans")
+        #expect(!L10n.isEnglish)
+        #expect(PlayerKind.netEase.displayName == "网易云音乐")
+        #expect(StageStyle.luminous.displayName == "流光")
+        #expect(ControlCenterSection.player.title == "播放器")
+
+        appMenu.menuNeedsUpdate(appMenu.menu)
+        let zhTitles = appMenu.menu.items.map(\.title)
+        #expect(zhTitles.contains("配置中心…"))
+        #expect(zhTitles.contains("界面语言（简体中文）"))
+        #expect(zhTitles.contains("退出 SoftLive"))
     }
 }

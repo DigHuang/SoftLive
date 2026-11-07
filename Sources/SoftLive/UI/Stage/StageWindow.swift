@@ -143,7 +143,7 @@ struct StageWindowView: View {
         if let recent = model.recentTracks[preferences.preferredPlayer] {
             return LyricLine(time: 0, text: recent.title)
         }
-        return LyricLine(time: 0, text: "SoftLive 舞台模式")
+        return LyricLine(time: 0, text: L10n.tr("SoftLive 舞台模式", "SoftLive Stage"))
     }
 
     private var nextLineTime: TimeInterval? {
@@ -217,10 +217,10 @@ struct StageWindowView: View {
         HStack(spacing: 10) {
             // Top-left: clean standalone window action circles without double-nested capsule borders or verbose text.
             HStack(spacing: 8) {
-                hudCircleButton(icon: "xmark", help: "关闭演示舞台", action: onClose)
+                hudCircleButton(icon: "xmark", help: L10n.tr("关闭演示舞台", "Close Stage Window"), action: onClose)
                 hudCircleButton(
                     icon: "arrow.up.left.and.arrow.down.right",
-                    help: "切换最大化舞台",
+                    help: L10n.tr("切换最大化舞台", "Toggle Maximize Stage"),
                     action: onToggleZoom
                 )
             }
@@ -265,7 +265,7 @@ struct StageWindowView: View {
                                 ? Color(nsColor: palette.accent)
                                 : .white.opacity(0.50)
                         )
-                    Text("星火")
+                    Text(L10n.tr("星火", "Sparks"))
                         .font(.system(size: 12, weight: preferences.stageSparks ? .semibold : .medium))
                         .foregroundStyle(preferences.stageSparks ? .white : .white.opacity(0.55))
                 }
@@ -281,7 +281,7 @@ struct StageWindowView: View {
                     }
                 }
                 .contentShape(.capsule)
-                .help("切换星火粒子特效")
+                .help(L10n.tr("切换星火粒子特效", "Toggle Spark Particles"))
                 .onTapGesture {
                     preferences.stageSparks.toggle()
                 }
@@ -325,7 +325,7 @@ struct StageWindowView: View {
                 .shadow(color: .black.opacity(0.32), radius: 8, y: 3)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(track?.title ?? "未在播放")
+                    Text(track?.title ?? L10n.tr("未在播放", "Not Playing"))
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -345,7 +345,7 @@ struct StageWindowView: View {
 
             hudCircleButton(
                 icon: model.isPlaying ? "pause.fill" : "play.fill",
-                help: model.isPlaying ? "暂停" : "播放"
+                help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("播放", "Play")
             ) {
                 if model.playback != nil {
                     model.togglePlayPause()

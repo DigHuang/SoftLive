@@ -91,8 +91,8 @@ final class PlaybackModel {
     var subline: String? {
         if let translation = currentLine?.translation { return translation }
         switch lyricsStatus {
-        case .loading: return "正在搜索歌词…"
-        case .notFound: return "暂无歌词"
+        case .loading: return L10n.tr("正在搜索歌词…", "Searching lyrics…")
+        case .notFound: return L10n.tr("暂无歌词", "No lyrics")
         case .idle: return nil
         case .loaded:
             guard let lyrics, let next = lyrics.nextSungIndex(after: currentIndex, skipCredits: interlude != nil) else { return nil }

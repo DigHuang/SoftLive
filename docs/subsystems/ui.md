@@ -4,6 +4,7 @@
 
 - 界面读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift)、[`SystemMonitor`](../../Sources/SoftLive/Monitor/SystemMonitor.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，通过模型方法发起播放控制、详情采样选择与结束进程；不直接访问播放器存储、采样器或网络。独立舞台的排版与特效见 [舞台模式](stage.md)。
 - [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是共享主菜单，两个状态栏项及右键桌面歌词/组件/舞台窗口均可访问；再次打开 App、点击菜单「配置中心… (`⌘,`)」或点击监控面板底栏设置图标可打开 [`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift)。
+- [`L10n`](../../Sources/SoftLive/Support/L10n.swift) 提供零依赖、编译期安全的中英双语（`zh-Hans` / `en`）本地化，由 `Preferences.language`（`跟随系统 / 简体中文 / English`）驱动；切换时通过 `@Observable` 自动刷新 SwiftUI 面板、CoreText 舞台/歌词占位与 `AppMenu`，无需重启 App。[`build-app.sh`](../../Scripts/build-app.sh) 同时将 `Resources/{zh-Hans,en}.lproj/InfoPlist.strings` 拷入应用包，本地化系统自动化授权弹窗。
 
 ## 应用图标与打包
 
@@ -42,9 +43,9 @@
 
 ### 桌面配置中心
 
-[`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift) 为 `620 × 536 pt` 左右分栏配置窗口，禁用最大化按钮：
+[`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift) 为 `640 × 636 pt` 左右分栏配置窗口，禁用最大化按钮：
 
-- **左侧栏（`156 pt`）**：上方为原生系统设置风格的单行「播放器」与「监听」导航项（配 `22 × 22 pt` 圆角图标徽标与平铺选中态），底部为带完整彩色应用图标（`BrandAssets.appIcon`）的 `SoftLive` 入口，点击后在右侧展示产品说明、交互指南与架构隐私承诺。
+- **左侧栏（`168 pt`）**：上方为原生系统设置风格的单行「播放器」与「监听」导航项（配 `24 × 24 pt` 圆角图标徽标与平铺选中态），底部为带完整彩色应用图标（`BrandAssets.appIcon`）的 `SoftLive` 入口，点击后在右侧展示通用语言设置、产品说明、交互指南与架构隐私承诺。
 - **右侧内容区（`464 pt`）**：采用无冗余副文案的单列分组表单（每行固定 `34 pt` 高，分段器使用 `.fixedSize` 防止文字截断）：
   - **播放器**：配置首选播放器、桌面常驻组件开关、状态栏歌词开关与最大宽度（`180 / 260 / 340 pt`）、桌面悬浮歌词开关/穿透锁定/字号（`22 / 26 / 30 pt`）/副句模式（`翻译优先 / 仅翻译 / 单行`）、演示舞台开关/律动风格（`流光 / 描金`）/星火特效。
   - **监听**：配置状态栏监控总开关、状态栏样式（`网速 + 柱状图` / `仅柱状图`）、柱状图彩色显示开关、弹窗默认页面（`CPU / RAM / TMP`）、采样间隔（`1 秒 / 2 秒 / 5 秒`）以及 CPU / 内存 / 温度三项告警阈值。
