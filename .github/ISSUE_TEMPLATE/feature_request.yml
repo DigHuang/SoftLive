@@ -1,0 +1,31 @@
+name: ✨ Feature Request
+description: Propose support for a new player, UI enhancement, or system monitor metric
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, please check the [Requirements & Non-Goals](https://github.com/DigHuang/SoftLive/blob/main/docs/requirements.md#明确不做) to make sure the idea hasn't already been ruled out due to permission or performance boundaries.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Use Case & Problem
+      description: What scenario or pain point does this feature address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Behavior / UI
+      description: How should it work across the menu bar, desktop overlay, desktop widget, Stage Mode, or system monitor?
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Permissions & Performance Considerations (Optional)
+      description: SoftLive maintains zero third-party dependencies, no permission bypasses, and sub-1% CPU usage. Share any relevant macOS APIs or implementation ideas here.

@@ -39,7 +39,7 @@ Scripts/build-app.sh
 Scripts/build-app.sh --run
 ```
 
-签名注意事项沿用项目 [构建说明](../../README.md#构建与运行)。构建与运行不向应用添加第三方依赖。
+签名注意事项沿用项目 [构建说明](../../README.zh-CN.md#构建与运行)。构建与运行不向应用添加第三方依赖。
 
 ## 验证
 
