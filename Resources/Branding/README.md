@@ -9,7 +9,7 @@
 - [app-icon.svg](app-icon.svg)：完整、不预裁圆角的矢量画布，背景配色与缎带轮廓对应原生图标工程。
 - [app-icon.png](app-icon.png)：系统从最终 App 包读取的图标预览，供 README 展示。
 - [logo.svg](logo.svg)：相同缎带外轮廓的透明背景单色标志，使用 `currentColor`。
-- [StatusBarIcon.png](../../Sources/SoftLive/UI/StatusBar/Resources/StatusBarIcon.png)：从单色轮廓导出的 36 × 36 px 状态栏位图，以 18 × 18 pt 模板图标显示。
+- [SyncTemplate.png](../../Sources/SoftLive/UI/Branding/Resources/SyncTemplate.png)：从单色轮廓导出的 128 × 128 px 共享模板，状态栏以 18 × 18 pt 显示，桌面组件无封面时以 28 × 28 pt 显示。
 
 ## 材质与尺寸
 
@@ -17,7 +17,7 @@
 
 原生图标工程使用冷青蓝与雾蓝的缎带层，配浅冷色渐变背景。圆角、底板和系统外观由 macOS 处理，不在前景图层里再画一套缩小底板，以免出现双重套框。固定预览与动态系统呈现可能因外观和尺寸而有所区别。
 
-状态栏位图只有黑色与透明度，不包含背景、彩色渐变或霜光效果；`NSImage.isTemplate = true` 使其随系统深浅外观着色。有歌词文字时延续仅显示文字的行为。
+共享模板只有黑色与透明度，不包含背景、彩色渐变或霜光效果；`NSImage.isTemplate = true` 使状态栏随系统深浅外观着色，桌面组件的无封面占位标志使用次级文字色。有歌词文字时延续仅显示文字的行为。
 
 修改缎带轮廓后，应同步更新单色标志、图层 PNG 和状态栏位图。独立标志保持长宽比例与至少 12 个 SVG 坐标单位的净空。
 
@@ -29,9 +29,9 @@
 Scripts/build-app.sh
 ```
 
-脚本执行 Release 编译，使用 `xcrun actool` 编译 `AppIcon.icon`，将 `Assets.car`、兼容 `AppIcon.icns` 和状态栏模板位图复制到 `build/SoftLive.app/Contents/Resources`，然后签名。临时编译目录在脚本结束时清理。
+脚本执行 Release 编译，使用 `xcrun actool` 编译 `AppIcon.icon`，将 `Assets.car`、兼容 `AppIcon.icns` 和共享模板位图复制到 `build/SoftLive.app/Contents/Resources`，然后签名。临时编译目录在脚本结束时清理。
 
-`Resources/Info.plist` 同时声明 `CFBundleIconName = AppIcon` 和 `CFBundleIconFile = AppIcon`。状态栏资源通过 SwiftPM 支持本地运行，打包 App 优先从主资源目录加载。
+`Resources/Info.plist` 同时声明 `CFBundleIconName = AppIcon` 和 `CFBundleIconFile = AppIcon`。共享模板通过 SwiftPM 支持本地运行，打包 App 优先从主资源目录加载，由 `BrandAssets` 缓存并复用。
 
 构建并重启当前 SoftLive：
 
