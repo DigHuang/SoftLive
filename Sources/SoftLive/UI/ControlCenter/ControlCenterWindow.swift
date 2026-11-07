@@ -131,7 +131,7 @@ struct ControlCenterView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var appVersionString: String {
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.2"
         return "v\(ver)"
     }
 

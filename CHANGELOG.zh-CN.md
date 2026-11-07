@@ -8,21 +8,25 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-08
+
 ### Added
 
 - **Sync 霜光品牌图标**：新增可编辑的缎带 SVG、macOS 26 原生图标工程与预览资源，App 打包时通过 `actool` 生成应用图标。([#14])
-- **桌面端配置中心**：新增 `640 × 636 pt` 左右分栏配置窗口（左侧「播放器 / 监听」双 Tab 与底部 `SoftLive` 产品说明入口），支持通过再次打开 App、右键菜单 `配置中心… (⌘,)` 或监控弹窗底栏唤起；窗口关闭时自动卸载内部 SwiftUI 视图树以保持零后台开销。([#16])
+- **桌面端配置中心**：新增 `640 × 636 pt` 左右分栏配置窗口（左侧「播放器 / 监听」双 Tab 与底部 `SoftLive` 产品说明入口），支持通过再次打开 App、右键菜单 `配置中心… (⌘,)` 或监控弹窗底栏唤起；窗口关闭时自动卸载内部 SwiftUI 视图树以保持零后台开销，并挂载应用级 `NSApp.mainMenu` 使窗口聚焦时原生支持 `⌘Q`、`⌘W`、`⌘M`、`⌘,` 与 `⌘H` 快捷键。([#16], [#19])
 - **歌词与监控自定义项**：新增状态栏歌词最大宽度（`180 / 260 / 340 pt`）、桌面悬浮歌词字号（`22 / 26 / 30 pt`）与副句模式（`翻译优先 / 仅翻译 / 单行`）、状态栏监控样式（`52 × 22 pt` 网速+柱状图 / `20 × 22 pt` 仅柱状图）、柱状图彩色/单色模板显示开关、弹窗默认标签页、后台采样间隔（`1 秒 / 2 秒 / 5 秒`）及 `CPU / 内存 / 温度` 三项告警阈值。([#16], [#17])
 - **中英双语国际化（`zh-Hans` / `en`）**：为配置中心、右键菜单、状态栏监控面板、桌面歌词、桌面组件与演示舞台补齐编译期安全的中英双语支持，支持应用内免重启实时切换（`跟随系统 / 简体中文 / English`），并提供本地化 `InfoPlist.strings` 自动化授权说明。([#18])
+- **中英双语文档与开源社区规范**：新增中英双语 README / CHANGELOG 互链、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md` 以及 GitHub Issue / PR 模板。([#15])
 
 ### Changed
 
-- **状态栏标志**：无歌词文字时使用 18 pt 单色 Sync 模板图标，随系统深浅外观适配，替代音符符号。([#14])
+- **状态栏标志与精简右键菜单**：无歌词文字时使用 18 pt 单色 Sync 模板图标（随系统深浅外观适配），并精简状态栏右键快捷菜单，仅保留简短播放状态、高频桌面面板开关、紧凑的 `歌词偏移` 子菜单、`配置中心… (⌘,)` 与 `退出 SoftLive (⌘Q)`。([#14], [#19])
 - **桌面组件与舞台占位图**：无封面时桌面组件与演示舞台统一显示单色 Sync 标志，与状态栏共用品牌模板。([#14], [#16])
 - **桌面组件、悬浮歌词与舞台 HUD 升级**：桌面组件复用 `StagePalette.cached(for:)` 叠加封面流光环境层与明暗自适应控制按钮；桌面悬浮歌词唤醒栏支持显示当前曲目与 `±0.5s` 偏移微调胶囊；演示舞台固定 `darkAqua` 外观、改用无底栏的四角悬浮控制并支持双击舞台切下一首。([#16])
 
 ### Fixed
 
+- **配置中心跨 Tab 顶部与组间距对齐**：修复配置中心在「播放器」「监听」与「产品说明」之间切换时顶部高度偏移 `5 pt` 与组间距不一致的问题，使各 Tab 首张卡片上沿（`y = 50 pt`）与左侧首项导航严格齐平。([#19])
 - **状态栏监控二次点击收起**：消除外部点击事件监听先于 `NSStatusBarButton` 动作触发导致的同次点击重开，并将弹窗命中检测收敛至卡片实际内框。([#16])
 
 ## [0.0.1] - 2026-11-06
@@ -53,7 +57,8 @@ SoftLive 首个版本：提供 macOS 状态栏、桌面悬浮窗、桌面组件�
 - **YRC 词间空格与游标对齐**：归并 YRC 词间独立空白分词并保持整行文本与分词 UTF-16 长度一致，修复含行首空格或英文分词时的逐字高亮偏移。([#8], [#9])
 - **系统采样边界修复**：补齐 `AppleSMC` `SMCKeyData_t` 80 字节结构体对齐填充，通过 `KERN_PROCARGS2` 与工作目录区分通用宿主进程（如 `node` / `next-server`），并过滤 `utun*` 虚拟网卡重复流量与 `tcal` 固定校准温度项。([#5], [#7], [#8])
 
-[Unreleased]: https://github.com/DigHuang/SoftLive/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/DigHuang/SoftLive/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/DigHuang/SoftLive/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/DigHuang/SoftLive/releases/tag/v0.0.1
 [#1]: https://github.com/DigHuang/SoftLive/pull/1
 [#2]: https://github.com/DigHuang/SoftLive/pull/2
@@ -64,6 +69,8 @@ SoftLive 首个版本：提供 macOS 状态栏、桌面悬浮窗、桌面组件�
 [#9]: https://github.com/DigHuang/SoftLive/pull/9
 [#10]: https://github.com/DigHuang/SoftLive/pull/10
 [#14]: https://github.com/DigHuang/SoftLive/pull/14
+[#15]: https://github.com/DigHuang/SoftLive/pull/15
 [#16]: https://github.com/DigHuang/SoftLive/pull/16
 [#17]: https://github.com/DigHuang/SoftLive/pull/17
 [#18]: https://github.com/DigHuang/SoftLive/pull/18
+[#19]: https://github.com/DigHuang/SoftLive/pull/19

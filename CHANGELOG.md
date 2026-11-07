@@ -8,21 +8,25 @@ The format is based on [Keep a Changelog 2.0.0](https://keepachangelog.com/en/2.
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-08
+
 ### Added
 
 - **Sync Frost Brand Icon**: Added editable ribbon SVG assets, a native macOS 26 `.icon` project, and preview assets; `Scripts/build-app.sh` compiles the app icon bundle via `actool`. ([#14])
-- **Desktop Configuration Center**: Added a `640 × 636 pt` split-view configuration window (`播放器` / `监听` tabs plus a bottom-left `SoftLive` product overview entry), accessible by reopening the app, pressing `⌘,` from the menu, or clicking the settings button in the monitor popover footer; unloads its SwiftUI subtree when closed for zero background overhead. ([#16])
+- **Desktop Configuration Center**: Added a `640 × 636 pt` split-view configuration window (`播放器` / `监听` tabs plus a bottom-left `SoftLive` product overview entry), accessible by reopening the app, pressing `⌘,` from the menu, or clicking the settings button in the monitor popover footer; unloads its SwiftUI subtree when closed for zero background overhead, and mounts `NSApp.mainMenu` so `⌘Q`, `⌘W`, `⌘M`, `⌘,`, and `⌘H` work natively when windows are focused. ([#16], [#19])
 - **Customizable Lyrics & Monitor Preferences**: Added user preferences for menu bar lyrics max-width (`180 / 260 / 340 pt`), desktop floating lyrics font size (`22 / 26 / 30 pt`) and subline mode (`翻译优先 / 仅翻译 / 单行`), menu bar monitor display style (`52 × 22 pt` rate + bars or `20 × 22 pt` bars-only), colored vs. monochrome template monitor bars, default monitor popover tab, background sampling interval (`1s / 2s / 5s`), and `CPU / RAM / TMP` alert thresholds. ([#16], [#17])
 - **Bilingual Localization (`zh-Hans` / `en`)**: Added compile-time safe Chinese and English localization across all windows, menus, overlays, and the monitor popover with instant in-app switching (`System / 简体中文 / English`), plus localized `InfoPlist.strings` for the macOS Automation permission prompt. ([#18])
+- **Bilingual Documentation & Community Standards**: Added bilingual README/CHANGELOG switchers, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and GitHub Issue / PR templates. ([#15])
 
 ### Changed
 
-- **Menu Bar Mark**: Displays an 18 pt monochrome Sync template icon (adapting to light/dark system appearance) when no lyric text is shown, replacing the generic musical note symbol. ([#14])
+- **Menu Bar Mark & Streamlined Right-Click Menu**: Displays an 18 pt monochrome Sync template icon (adapting to light/dark system appearance) when no lyric text is shown, and streamlines the status item right-click menu to keep only concise playback status, high-frequency desktop panel toggles, a compact `Lyrics Offset` submenu, `Control Center… (⌘,)`, and `Quit SoftLive (⌘Q)`. ([#14], [#19])
 - **Desktop Widget & Stage Placeholders**: Displays the monochrome Sync mark when no album artwork is available across both the desktop widget and Stage Mode, sharing the brand template with the menu bar. ([#14], [#16])
 - **Desktop Widget, Floating Lyrics & Stage HUD Refinement**: Added cached artwork-derived ambient aura lighting (`StagePalette.cached(for:)`) and adaptive Light/Dark controls to the desktop widget; upgraded the `⌘`-awake bar in desktop lyrics with track title and inline `±0.5s` offset pills; switched Stage Mode to a `darkAqua` four-corner HUD layout with double-click to skip tracks. ([#16])
 
 ### Fixed
 
+- **Control Center Cross-Tab Top & Group Alignment**: Fixed a `5 pt` vertical header shift and `2 pt` group spacing discrepancy when switching between `Player`, `Monitor`, and `About` tabs in `ControlCenterWindow`, aligning the top edge of the first card (`y = 50 pt`) flush with the first sidebar navigation item across all tabs. ([#19])
 - **Status Bar Monitor Second-Click Dismissal**: Prevented outside-click event monitors from racing with `NSStatusBarButton` action delivery and reopening the monitor popover on a second click, and restricted popover hit-testing to the inner card bounds. ([#16])
 
 ## [0.0.1] - 2026-11-06
@@ -53,7 +57,8 @@ Initial release of SoftLive: real-time word-by-word synced lyrics for Apple Musi
 - **YRC Inter-Word Spaces & Cursor Alignment**: Merged standalone whitespace tokens into preceding words while keeping line text and word token UTF-16 lengths identical, fixing highlight drift on lines with leading spaces or English words. ([#8], [#9])
 - **System Sampler Edge Cases**: Added explicit 3-byte alignment padding to the 80-byte `AppleSMC` `SMCKeyData_t` struct, resolved `KERN_PROCARGS2` + working directory names to distinguish generic host processes (`node` / `next-server`), excluded `utun*` tunnel interfaces from physical network rates, and filtered fixed `tcal` calibration sensors. ([#5], [#7], [#8])
 
-[Unreleased]: https://github.com/DigHuang/SoftLive/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/DigHuang/SoftLive/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/DigHuang/SoftLive/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/DigHuang/SoftLive/releases/tag/v0.0.1
 [#1]: https://github.com/DigHuang/SoftLive/pull/1
 [#2]: https://github.com/DigHuang/SoftLive/pull/2
@@ -64,6 +69,8 @@ Initial release of SoftLive: real-time word-by-word synced lyrics for Apple Musi
 [#9]: https://github.com/DigHuang/SoftLive/pull/9
 [#10]: https://github.com/DigHuang/SoftLive/pull/10
 [#14]: https://github.com/DigHuang/SoftLive/pull/14
+[#15]: https://github.com/DigHuang/SoftLive/pull/15
 [#16]: https://github.com/DigHuang/SoftLive/pull/16
 [#17]: https://github.com/DigHuang/SoftLive/pull/17
 [#18]: https://github.com/DigHuang/SoftLive/pull/18
+[#19]: https://github.com/DigHuang/SoftLive/pull/19

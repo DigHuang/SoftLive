@@ -39,7 +39,7 @@ body:
     attributes:
       label: Environment
       description: macOS version, chip model (e.g. Apple M4), and SoftLive version or commit
-      placeholder: "macOS 26.4 · Apple M4 · SoftLive v0.0.1"
+      placeholder: "macOS 26.4 · Apple M4 · SoftLive v0.0.2"
     validations:
       required: true
 
