@@ -268,6 +268,7 @@ struct KaraokeLayerViewTests {
         centerState.isOpen = true
         for lang in [AppLanguage.zhHans, .en] {
             preferences.language = lang
+            var firstCardTopRows: [ControlCenterSection: Int] = [:]
             for section in ControlCenterSection.allCases {
                 centerState.selectedSection = section
                 let centerHost = NSHostingView(
@@ -280,10 +281,23 @@ struct KaraokeLayerViewTests {
                 )
                 centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
                 centerHost.layoutSubtreeIfNeeded()
+                #expect(centerHost.fittingSize == ControlCenterWindow.windowSize)
                 let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
                 centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
                 #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+
+                let probeX = Int( CGFloat(centerRep.pixelsWide) * 0.55 )
+                let bgColor = try #require(centerRep.colorAt(x: probeX, y: 4))
+                let firstCardRow = try #require((0..<centerRep.pixelsHigh).first { y in
+                    guard let c = centerRep.colorAt(x: probeX, y: y) else { return false }
+                    return abs(c.redComponent - bgColor.redComponent) > 0.015
+                        || abs(c.greenComponent - bgColor.greenComponent) > 0.015
+                        || abs(c.blueComponent - bgColor.blueComponent) > 0.015
+                })
+                firstCardTopRows[section] = firstCardRow
             }
+            #expect(firstCardTopRows[.player] == firstCardTopRows[.monitor])
+            #expect(firstCardTopRows[.player] == firstCardTopRows[.about])
         }
     }
 
@@ -311,12 +325,26 @@ struct KaraokeLayerViewTests {
         #expect(ControlCenterSection.player.title == "Player")
 
         let model = PlaybackModel(sources: [])
-        let appMenu = AppMenu(model: model, preferences: preferences)
+        var openedControlCenter = false
+        var quitTriggered = false
+        let appMenu = AppMenu(model: model, preferences: preferences) { _ in
+            openedControlCenter = true
+        }
+        appMenu.onQuit = { quitTriggered = true }
+
         appMenu.menuNeedsUpdate(appMenu.menu)
-        let enTitles = appMenu.menu.items.map(\.title)
-        #expect(enTitles.contains("Control Center…"))
-        #expect(enTitles.contains("Language (English)"))
-        #expect(enTitles.contains("Quit SoftLive"))
+        let enTitles = appMenu.menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(enTitles == [
+            "Not Playing",
+            "Desktop Lyrics",
+            "Lock Desktop Lyrics",
+            "Desktop Widget",
+            "Stage Window",
+            "Lyrics Offset",
+            "Control Center…",
+            "Quit SoftLive"
+        ])
+        #expect(enTitles.allSatisfy { $0.count <= 24 })
 
         preferences.language = .zhHans
         #expect(defaults.string(forKey: "appLanguage") == "zh-Hans")
@@ -326,9 +354,51 @@ struct KaraokeLayerViewTests {
         #expect(ControlCenterSection.player.title == "播放器")
 
         appMenu.menuNeedsUpdate(appMenu.menu)
-        let zhTitles = appMenu.menu.items.map(\.title)
-        #expect(zhTitles.contains("配置中心…"))
-        #expect(zhTitles.contains("界面语言（简体中文）"))
-        #expect(zhTitles.contains("退出 SoftLive"))
+        let zhTitles = appMenu.menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(zhTitles == [
+            "暂未播放",
+            "桌面歌词",
+            "锁定桌面歌词",
+            "桌面组件",
+            "演示舞台",
+            "歌词偏移",
+            "配置中心…",
+            "退出 SoftLive"
+        ])
+
+        let mainMenu = appMenu.makeMainMenu()
+        let settingsEvent = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: ",",
+                charactersIgnoringModifiers: ",",
+                isARepeat: false,
+                keyCode: 43
+            )
+        )
+        #expect(mainMenu.performKeyEquivalent(with: settingsEvent))
+        #expect(openedControlCenter)
+
+        let quitEvent = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "q",
+                charactersIgnoringModifiers: "q",
+                isARepeat: false,
+                keyCode: 12
+            )
+        )
+        #expect(mainMenu.performKeyEquivalent(with: quitEvent))
+        #expect(quitTriggered)
     }
 }

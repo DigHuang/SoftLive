@@ -64,9 +64,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 
 ## 验证
 
-**新建或修改窗口布局后，必须用 `screencapture -l <windowID>` 抓取真实窗口画面并肉眼核对：检查 `.fullSizeContentView` 顶部/底部裁切、分段器文字截断、冗余副文案与彩色应用图标（`BrandAssets.appIcon` vs 单色 `syncTemplate`）。**
+**新建或修改窗口布局后，必须用 `screencapture -l <windowID>` 抓取真实窗口画面并肉眼核对：检查 `.fullSizeContentView` 顶部/底部裁切、多 Tab 切换时顶部与组间距对齐、分段器文字截断、冗余副文案与彩色应用图标（`BrandAssets.appIcon` vs 单色 `syncTemplate`）。**
 - 2026-11-08 首次实现 `ControlCenterWindow` 时，仅在单元测试里断言了 `bitmapImageRepForCachingDisplay` 的像素宽度而未抓图查看真实窗口，结果真实窗口存在 4 处严重缺陷：① `.fullSizeContentView` 未加 `.ignoresSafeArea()` 且内容总高超过窗口高度，导致右侧首尾两行被窗口上下边缘截断一半；② 侧边栏误把状态栏专用的单色黑色模板 `BrandAssets.syncTemplate` 塞进紫色方块当应用 Logo（应使用完整彩色的 `BrandAssets.appIcon`）；③ 每行都堆砌解释性副标题、双列并排开关，导致分段器出现 `Apple Mu...`、`紧凑 1...` 截断；④ 侧边栏导航项和监控页塞入了重复的状态点和实时数据卡片。重做后先用 `screencapture -x -l` 抓图自检，确认无裁切、无截断、Logo 与留白正常后再交付。
-- 出现 1 次。
+- 2026-11-08 `ControlCenterView` 右侧 `detailPane` 曾用 `VStack(spacing: 18)` 包裹内容与尾部 `Spacer(minLength: 0)`，叠加 `.padding(.top, 32)` 与 `.padding(.bottom, 28)`。即使 `Spacer` 压缩为 `0 pt`，`VStack` 仍强制插入 `18 pt` 间距，导致 3 组卡片的「播放器」页总高变成 `646 pt`（超出窗口高度 `636 pt`），在未限制固定高度的 `.frame(maxHeight: .infinity)` 与外层默认居中 `.frame(width:height:)` 下整体向上偏移 `5 pt`（`y = 27 pt` vs 监听页 `y = 32 pt`）；同时「播放器」页（`spacing: 18`）与「监听」页（`spacing: 20`）组间距不一致，导致切换 Tab 时顶部与第二组卡片明显上下跳动。固定尺寸分栏窗口的每个面板必须显式绑定窗口高度并设 `alignment: .topLeading`，去除冗余 `Spacer` 间距，统一各 Tab 的首组标题起点（`y = 28 pt`）、首张卡片上沿（`y = 50 pt`，与左侧首项导航齐平）及组间距（`18 pt`）。
+- 出现 2 次。
 
 **SwiftUI 的 `.glassEffect` 是窗后背景采样材质，不能用于不透明画布窗口内部的悬浮 HUD；嵌套胶囊必须使用等距内边距保持共心圆弧。**
 - 2026-11-08，在 `StageWindow` 内部的顶部/底部 HUD 上套用 `.glassEffect(.regular)`，且未给窗口固定 `darkAqua` 外观。由于 `.glassEffect` 底层采样的是窗口背后的桌面/其他浅色窗口而非同窗口内的深色 `StageCanvasView`，在系统浅色外观下把深色舞台上的 HUD 渲染成发白发灰的塑料条；同时外层胶囊使用非等距内边距（`horizontal: 8, vertical: 5`）包内层亮色胶囊、左上角胶囊内又叠一层带描边圆钮，再加切歌按钮误用快进图标 `forward.fill`（`⏩`），导致 5 处视觉比例失调。改为窗口固定 `darkAqua`、舞台内部 HUD 使用深色半透明层与等距 `4 pt` 共心内边距、切歌统一用 `forward.end.fill`（`⏭`）。

@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement only applies to the bundled app; keep `swift run` out of the Dock too.
         NSApp.setActivationPolicy(.accessory)
+        NSApp.mainMenu = appMenu.makeMainMenu()
         monitorStatusBar = MonitorStatusBar(
             monitor: monitor,
             preferences: preferences,

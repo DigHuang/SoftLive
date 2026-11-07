@@ -139,23 +139,25 @@ struct ControlCenterView: View {
         if !state.isOpen {
             Color.clear.frame(width: 0, height: 0)
         } else {
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 sidebar
-                    .frame(width: Self.sidebarWidth)
-                    .frame(maxHeight: .infinity)
+                    .frame(width: Self.sidebarWidth, height: ControlCenterWindow.windowSize.height, alignment: .topLeading)
 
                 Rectangle()
                     .fill(dividerColor)
-                    .frame(width: 0.5)
-                    .frame(maxHeight: .infinity)
+                    .frame(width: 0.5, height: ControlCenterWindow.windowSize.height)
 
                 detailPane
-                    .frame(width: ControlCenterWindow.windowSize.width - Self.sidebarWidth - 0.5)
-                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                    .frame(
+                        width: ControlCenterWindow.windowSize.width - Self.sidebarWidth - 0.5,
+                        height: ControlCenterWindow.windowSize.height,
+                        alignment: .topLeading
+                    )
             }
             .frame(
                 width: ControlCenterWindow.windowSize.width,
-                height: ControlCenterWindow.windowSize.height
+                height: ControlCenterWindow.windowSize.height,
+                alignment: .topLeading
             )
             .background(windowBackground)
             .ignoresSafeArea()
@@ -274,7 +276,7 @@ struct ControlCenterView: View {
     // MARK: - Right Detail Pane
 
     private var detailPane: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        Group {
             switch state.selectedSection {
             case .player:
                 playerSettings
@@ -283,11 +285,9 @@ struct ControlCenterView: View {
             case .about:
                 aboutProductView
             }
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 28)
-        .padding(.top, 32)
-        .padding(.bottom, 28)
+        .padding(.top, 28)
     }
 
     // MARK: - Tab 1: 播放器
@@ -402,7 +402,7 @@ struct ControlCenterView: View {
     // MARK: - Tab 2: 监听
 
     private var monitorSettings: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             formGroup(title: L10n.tr("状态栏与面板", "Status Bar & Popover")) {
                 formToggleRow(L10n.tr("显示状态栏监控", "Show System Monitor"), isOn: Binding(
                     get: { preferences.showsSystemMonitor },
@@ -496,63 +496,56 @@ struct ControlCenterView: View {
     private var aboutProductView: some View {
         let isDark = colorScheme == .dark
         return VStack(alignment: .leading, spacing: 18) {
-            // Brand Hero Card
-            HStack(spacing: 14) {
-                Image(nsImage: BrandAssets.appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 52, height: 52)
+            formGroup(title: L10n.tr("关于应用", "About")) {
+                HStack(spacing: 14) {
+                    Image(nsImage: BrandAssets.appIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 52, height: 52)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text("SoftLive")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.primary)
-                        Text(appVersionString)
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(MonitorPalette.cyan)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(MonitorPalette.cyan.opacity(0.14), in: .capsule)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text("SoftLive")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.primary)
+                            Text(appVersionString)
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(MonitorPalette.cyan)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(MonitorPalette.cyan.opacity(0.14), in: .capsule)
+                        }
+                        Text(L10n.tr("macOS 原生实时逐字歌词与硬件遥测", "Native Lyrics & Hardware Telemetry"))
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    Text(L10n.tr("macOS 原生实时逐字歌词与硬件遥测", "Native Lyrics & Hardware Telemetry"))
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 4) {
-                    Text("GitHub")
-                        .font(.system(size: 11.5, weight: .medium))
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 11)
-                .frame(height: 26)
-                .background(
-                    isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05),
-                    in: .capsule
-                )
-                .overlay {
-                    Capsule().strokeBorder(borderColor, lineWidth: 0.5)
-                }
-                .contentShape(.capsule)
-                .onTapGesture {
-                    NSWorkspace.shared.open(Self.githubURL)
-                }
-            }
-            .padding(14)
-            .background {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(isDark ? Color.white.opacity(0.05) : Color.white)
+                    HStack(spacing: 4) {
+                        Text("GitHub")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 11)
+                    .frame(height: 26)
+                    .background(
+                        isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05),
+                        in: .capsule
+                    )
                     .overlay {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .strokeBorder(borderColor, lineWidth: 0.5)
+                        Capsule().strokeBorder(borderColor, lineWidth: 0.5)
                     }
+                    .contentShape(.capsule)
+                    .onTapGesture {
+                        NSWorkspace.shared.open(Self.githubURL)
+                    }
+                }
+                .padding(14)
             }
 
             formGroup(title: L10n.tr("通用设置", "General")) {
