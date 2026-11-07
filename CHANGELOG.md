@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog 2.0.0](https://keepachangelog.com/en/2.
 
 - **Sync Frost Brand Icon**: Added editable ribbon SVG assets, a native macOS 26 `.icon` project, and preview assets; `Scripts/build-app.sh` compiles the app icon bundle via `actool`. ([#14])
 - **Desktop Configuration Center**: Added a `640 × 636 pt` split-view configuration window (`播放器` / `监听` tabs plus a bottom-left `SoftLive` product overview entry), accessible by reopening the app, pressing `⌘,` from the menu, or clicking the settings button in the monitor popover footer; unloads its SwiftUI subtree when closed for zero background overhead. ([#16])
-- **Customizable Lyrics & Monitor Preferences**: Added user preferences for menu bar lyrics max-width (`180 / 260 / 340 pt`), desktop floating lyrics font size (`22 / 26 / 30 pt`) and subline mode (`翻译优先 / 仅翻译 / 单行`), menu bar monitor display style (`52 × 22 pt` rate + bars or `20 × 22 pt` bars-only), colored vs. monochrome template monitor bars, default monitor popover tab, background sampling interval (`1s / 2s / 5s`), and `CPU / RAM / TMP` alert thresholds. ([#16])
+- **Customizable Lyrics & Monitor Preferences**: Added user preferences for menu bar lyrics max-width (`180 / 260 / 340 pt`), desktop floating lyrics font size (`22 / 26 / 30 pt`) and subline mode (`翻译优先 / 仅翻译 / 单行`), menu bar monitor display style (`52 × 22 pt` rate + bars or `20 × 22 pt` bars-only), colored vs. monochrome template monitor bars, default monitor popover tab, background sampling interval (`1s / 2s / 5s`), and `CPU / RAM / TMP` alert thresholds. ([#16], [#17])
 
 ### Changed
 
@@ -64,3 +64,4 @@ Initial release of SoftLive: real-time word-by-word synced lyrics for Apple Musi
 [#10]: https://github.com/DigHuang/SoftLive/pull/10
 [#14]: https://github.com/DigHuang/SoftLive/pull/14
 [#16]: https://github.com/DigHuang/SoftLive/pull/16
+[#17]: https://github.com/DigHuang/SoftLive/pull/17
