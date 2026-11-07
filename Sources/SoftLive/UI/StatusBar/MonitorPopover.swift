@@ -26,8 +26,11 @@ enum MonitorPalette {
         )
     }
 
-    static func cpuColor(_ usage: Double) -> Color {
-        usage >= 0.80 ? orange : cyan
+    static func cpuColor(
+        _ usage: Double,
+        threshold: Double = MonitorCPUAlertThreshold.standard.fraction
+    ) -> Color {
+        usage >= threshold ? orange : cyan
     }
 
     /// Primary visual theme for the RAM tab (hero value, sparkline, and process bars).
@@ -36,17 +39,24 @@ enum MonitorPalette {
     }
 
     /// Semantic status color for the memory pressure badge and tab indicator dot.
-    static func ramPressureColor(usage: Double, pressure: MemoryPressureLevel) -> Color {
+    static func ramPressureColor(
+        usage: Double,
+        pressure: MemoryPressureLevel,
+        alertThreshold: Double = MonitorRAMAlertThreshold.standard.fraction
+    ) -> Color {
         switch pressure {
         case .critical: coral
         case .warning: amber
-        case .normal: usage >= 0.88 ? amber : emerald
+        case .normal: usage >= alertThreshold ? amber : emerald
         }
     }
 
-    static func thermalColor(_ celsius: Double?) -> Color {
+    static func thermalColor(
+        _ celsius: Double?,
+        alertThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
+    ) -> Color {
         guard let celsius else { return teal }
-        if celsius >= 72 { return coral }
+        if celsius >= alertThreshold { return coral }
         if celsius >= 55 { return amber }
         return teal
     }
@@ -66,6 +76,8 @@ struct MonitorPopoverView: View {
     )
 
     let monitor: SystemMonitor
+    var preferences: Preferences?
+    var onOpenSettings: (() -> Void)?
     var onActiveHeightChange: ((CGFloat) -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
@@ -75,6 +87,15 @@ struct MonitorPopoverView: View {
 
     private var metrics: SystemMetrics { monitor.detailMetrics }
     private var selectedTab: MonitorTab { monitor.activeTab }
+    private var cpuAlertThreshold: Double {
+        preferences?.monitorCPUAlertThreshold.fraction ?? MonitorCPUAlertThreshold.standard.fraction
+    }
+    private var ramAlertThreshold: Double {
+        preferences?.monitorRAMAlertThreshold.fraction ?? MonitorRAMAlertThreshold.standard.fraction
+    }
+    private var thermalAlertThreshold: Double {
+        preferences?.monitorThermalAlertThreshold.celsius ?? MonitorThermalAlertThreshold.standard.celsius
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -177,17 +198,21 @@ struct MonitorPopoverView: View {
 
     private func tabDotColor(for tab: MonitorTab) -> Color {
         switch tab {
-        case .cpu: MonitorPalette.cpuColor(metrics.cpuUsage)
-        case .ram: MonitorPalette.ramPressureColor(usage: metrics.memoryUsage, pressure: metrics.memoryPressure)
-        case .tmp: MonitorPalette.thermalColor(metrics.temperatureCelsius)
+        case .cpu: MonitorPalette.cpuColor(metrics.cpuUsage, threshold: cpuAlertThreshold)
+        case .ram: MonitorPalette.ramPressureColor(
+            usage: metrics.memoryUsage,
+            pressure: metrics.memoryPressure,
+            alertThreshold: ramAlertThreshold
+        )
+        case .tmp: MonitorPalette.thermalColor(metrics.temperatureCelsius, alertThreshold: thermalAlertThreshold)
         }
     }
 
     private func tabTextAccent(for tab: MonitorTab) -> Color {
         switch tab {
-        case .cpu: MonitorPalette.cpuColor(metrics.cpuUsage)
+        case .cpu: MonitorPalette.cpuColor(metrics.cpuUsage, threshold: cpuAlertThreshold)
         case .ram: MonitorPalette.ramThemeColor(pressure: metrics.memoryPressure)
-        case .tmp: MonitorPalette.thermalColor(metrics.temperatureCelsius)
+        case .tmp: MonitorPalette.thermalColor(metrics.temperatureCelsius, alertThreshold: thermalAlertThreshold)
         }
     }
 
@@ -206,7 +231,7 @@ struct MonitorPopoverView: View {
 
     private var cpuTabContent: some View {
         let d = metrics.cpuDetails
-        let accent = MonitorPalette.cpuColor(metrics.cpuUsage)
+        let accent = MonitorPalette.cpuColor(metrics.cpuUsage, threshold: cpuAlertThreshold)
         return VStack(alignment: .leading, spacing: 10) {
             // Hero + 60s Sparkline Card
             hudCard {
@@ -329,7 +354,8 @@ struct MonitorPopoverView: View {
         let accent = MonitorPalette.ramThemeColor(pressure: metrics.memoryPressure)
         let badgeColor = MonitorPalette.ramPressureColor(
             usage: metrics.memoryUsage,
-            pressure: metrics.memoryPressure
+            pressure: metrics.memoryPressure,
+            alertThreshold: ramAlertThreshold
         )
         return VStack(alignment: .leading, spacing: 10) {
             // Hero + Memory Pressure + 60s Sparkline Card
@@ -431,7 +457,7 @@ struct MonitorPopoverView: View {
 
     private var tmpTabContent: some View {
         let d = metrics.thermalDetails
-        let accent = MonitorPalette.thermalColor(metrics.temperatureCelsius)
+        let accent = MonitorPalette.thermalColor(metrics.temperatureCelsius, alertThreshold: thermalAlertThreshold)
         return VStack(alignment: .leading, spacing: 10) {
             // Hero + Thermal State + 60s Sparkline Card
             hudCard {
@@ -526,7 +552,7 @@ struct MonitorPopoverView: View {
 
     private func thermalZoneBar(label: String, celsius: Double?) -> some View {
         let progress = SystemMetrics.thermalProgress(celsius)
-        let color = MonitorPalette.thermalColor(celsius)
+        let color = MonitorPalette.thermalColor(celsius, alertThreshold: thermalAlertThreshold)
         let barWidth: CGFloat = 94
         return HStack(spacing: 8) {
             Text(label)
@@ -709,6 +735,16 @@ struct MonitorPopoverView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let onOpenSettings {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 18)
+                    .background(trackColor, in: Capsule())
+                    .contentShape(Rectangle())
+                    .help("打开监听配置中心")
+                    .onTapGesture(perform: onOpenSettings)
+            }
         }
     }
 

@@ -206,7 +206,8 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
 }
 
 final class MonitorStatusBar: NSObject {
-    private static let itemWidth: CGFloat = 52
+    private static let fullWidth: CGFloat = 52
+    private static let barsOnlyWidth: CGFloat = 20
     private static let itemHeight: CGFloat = 22
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 8.0, weight: .semibold)
     private static let rightParagraphStyle: NSParagraphStyle = {
@@ -253,6 +254,7 @@ final class MonitorStatusBar: NSObject {
     }
 
     struct DisplayKey: Equatable {
+        let style: MonitorStatusBarStyle
         let upText: String
         let downText: String
         let cpuBarSteps: Int
@@ -263,16 +265,23 @@ final class MonitorStatusBar: NSObject {
         let tmpBand: Int
         let pressure: MemoryPressureLevel
 
-        init(metrics: SystemMetrics) {
-            upText = SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec)
-            downText = SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec)
+        init(
+            metrics: SystemMetrics,
+            style: MonitorStatusBarStyle = .rateAndBars,
+            cpuThreshold: Double = MonitorCPUAlertThreshold.standard.fraction,
+            ramThreshold: Double = MonitorRAMAlertThreshold.standard.fraction,
+            thermalThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
+        ) {
+            self.style = style
+            upText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec) : ""
+            downText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec) : ""
             cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
             ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
             tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
-            cpuHigh = metrics.cpuUsage >= 0.75
-            ramWarning = metrics.memoryUsage >= 0.88
+            cpuHigh = metrics.cpuUsage >= cpuThreshold
+            ramWarning = metrics.memoryUsage >= ramThreshold
             let temp = metrics.temperatureCelsius ?? 0
-            tmpBand = temp >= 72 ? 2 : (temp >= 55 ? 1 : 0)
+            tmpBand = temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)
             pressure = metrics.memoryPressure
         }
     }
@@ -284,12 +293,23 @@ final class MonitorStatusBar: NSObject {
     private var observeTask: Task<Void, Never>?
     private var lastDisplayKey: DisplayKey?
 
-    init(monitor: SystemMonitor, preferences: Preferences, menu: NSMenu) {
+    init(
+        monitor: SystemMonitor,
+        preferences: Preferences,
+        menu: NSMenu,
+        onOpenSettings: (() -> Void)? = nil
+    ) {
         self.monitor = monitor
         self.menu = menu
         super.init()
 
-        let initialKey = DisplayKey(metrics: monitor.metrics)
+        let initialKey = DisplayKey(
+            metrics: monitor.metrics,
+            style: preferences.monitorStatusBarStyle,
+            cpuThreshold: preferences.monitorCPUAlertThreshold.fraction,
+            ramThreshold: preferences.monitorRAMAlertThreshold.fraction,
+            thermalThreshold: preferences.monitorThermalAlertThreshold.celsius
+        )
         lastDisplayKey = initialKey
         item.isVisible = preferences.showsSystemMonitor
         item.button?.image = Self.renderImage(for: monitor.metrics, key: initialKey)
@@ -298,7 +318,14 @@ final class MonitorStatusBar: NSObject {
         item.button?.sendAction(on: [.leftMouseDown, .rightMouseUp])
 
         let popoverPanel = MonitorPopoverPanel(
-            rootView: MonitorPopoverView(monitor: monitor)
+            rootView: MonitorPopoverView(
+                monitor: monitor,
+                preferences: preferences,
+                onOpenSettings: { [weak self] in
+                    self?.panel?.dismiss()
+                    onOpenSettings?()
+                }
+            )
         )
         popoverPanel.onClose = { [weak monitor] in
             monitor?.setDetailActive(false)
@@ -306,8 +333,15 @@ final class MonitorStatusBar: NSObject {
         self.panel = popoverPanel
 
         observeTask = Task { [weak self] in
-            for await (metrics, visible) in Observations({
-                (monitor.metrics, preferences.showsSystemMonitor)
+            for await (metrics, visible, style, cpuAlert, ramAlert, thermalAlert) in Observations({
+                (
+                    monitor.metrics,
+                    preferences.showsSystemMonitor,
+                    preferences.monitorStatusBarStyle,
+                    preferences.monitorCPUAlertThreshold.fraction,
+                    preferences.monitorRAMAlertThreshold.fraction,
+                    preferences.monitorThermalAlertThreshold.celsius
+                )
             }) {
                 guard let self else { return }
                 if self.item.isVisible != visible {
@@ -317,7 +351,13 @@ final class MonitorStatusBar: NSObject {
                     self.panel?.dismiss()
                     continue
                 }
-                let key = DisplayKey(metrics: metrics)
+                let key = DisplayKey(
+                    metrics: metrics,
+                    style: style,
+                    cpuThreshold: cpuAlert,
+                    ramThreshold: ramAlert,
+                    thermalThreshold: thermalAlert
+                )
                 guard key != self.lastDisplayKey else { continue }
                 self.lastDisplayKey = key
                 self.item.button?.image = Self.renderImage(for: metrics, key: key)
@@ -362,46 +402,47 @@ final class MonitorStatusBar: NSObject {
         handleLeftClick()
     }
 
-    static func renderImage(for metrics: SystemMetrics) -> NSImage {
-        renderImage(for: metrics, key: DisplayKey(metrics: metrics))
+    static func renderImage(
+        for metrics: SystemMetrics,
+        style: MonitorStatusBarStyle = .rateAndBars
+    ) -> NSImage {
+        renderImage(for: metrics, key: DisplayKey(metrics: metrics, style: style))
     }
 
     private static func renderImage(for metrics: SystemMetrics, key: DisplayKey) -> NSImage {
-        let size = NSSize(width: itemWidth, height: itemHeight)
+        let width = key.style == .rateAndBars ? fullWidth : barsOnlyWidth
+        let size = NSSize(width: width, height: itemHeight)
         let image = NSImage(size: size, flipped: true) { _ in
-            let rightAttributes: [NSAttributedString.Key: Any] = [
-                .font: rateFont,
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: rightParagraphStyle,
-            ]
-            // 1. Left column (0...33 pt): clean two-line right-aligned upload / download rates (no arrows)
-            (key.upText as NSString).draw(
-                in: NSRect(x: 0, y: 1.5, width: 33, height: 10),
-                withAttributes: rightAttributes
-            )
-            (key.downText as NSString).draw(
-                in: NSRect(x: 0, y: 11.0, width: 33, height: 10),
-                withAttributes: rightAttributes
-            )
+            if key.style == .rateAndBars {
+                let rightAttributes: [NSAttributedString.Key: Any] = [
+                    .font: rateFont,
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: rightParagraphStyle,
+                ]
+                (key.upText as NSString).draw(
+                    in: NSRect(x: 0, y: 1.5, width: 33, height: 10),
+                    withAttributes: rightAttributes
+                )
+                (key.downText as NSString).draw(
+                    in: NSRect(x: 0, y: 11.0, width: 33, height: 10),
+                    withAttributes: rightAttributes
+                )
+            }
 
-            // 2. Right column (39.0...52.0 pt, 6.0 pt gap from text): 3 semantic colored vertical bars (CPU / RAM / TMP, each 0...100)
-            let cpuColor = metrics.cpuUsage >= 0.75 ? cpuOrange : cpuCyan
+            let cpuColor = key.cpuHigh ? cpuOrange : cpuCyan
             let ramColor: NSColor = switch metrics.memoryPressure {
             case .critical: ramCoral
             case .warning: ramAmber
-            case .normal: metrics.memoryUsage >= 0.88 ? ramAmber : ramEmerald
+            case .normal: key.ramWarning ? ramAmber : ramEmerald
             }
-            let temp = metrics.temperatureCelsius ?? 0
-            let tmpColor: NSColor = if temp >= 72 {
-                ramCoral
-            } else if temp >= 55 {
-                ramAmber
-            } else {
-                tmpTeal
+            let tmpColor: NSColor = switch key.tmpBand {
+            case 2: ramCoral
+            case 1: ramAmber
+            default: tmpTeal
             }
 
             drawVerticalBars(
-                originX: 39.0,
+                originX: key.style == .rateAndBars ? 39.0 : 3.5,
                 originY: 2.5,
                 barWidth: 3.0,
                 barHeight: 17,

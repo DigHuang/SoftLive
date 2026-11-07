@@ -120,7 +120,21 @@ struct DesktopLyricsView: View {
         return track.artist.isEmpty ? track.title : "\(track.title) — \(track.artist)"
     }
 
+    private var displayedSubline: String? {
+        switch preferences.desktopLyricsSublineMode {
+        case .translationThenNext:
+            model.subline
+        case .translationOnly:
+            model.currentLine?.translation
+        case .singleLine:
+            nil
+        }
+    }
+
     var body: some View {
+        let sizePreset = preferences.desktopLyricsSize
+        let sublineText = displayedSubline
+
         VStack(spacing: 4) {
             controlBar
                 .opacity(showsControls ? 1 : 0)
@@ -129,7 +143,7 @@ struct DesktopLyricsView: View {
             KaraokeText(
                 line: activeLine,
                 model: model,
-                fontSize: 26,
+                fontSize: sizePreset.mainFontSize,
                 weight: .semibold,
                 color: .white,
                 centered: true,
@@ -137,14 +151,16 @@ struct DesktopLyricsView: View {
             )
             .allowsHitTesting(false)
 
-            Text(model.subline ?? " ")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.white.opacity(0.76))
-                .shadow(color: .black.opacity(0.55), radius: 2, y: 0.8)
-                .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
-                .frame(height: 20)
-                .opacity(model.subline == nil ? 0 : 1)
-                .allowsHitTesting(false)
+            if preferences.desktopLyricsSublineMode != .singleLine {
+                Text(sublineText ?? " ")
+                    .font(.system(size: sizePreset.sublineFontSize, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.76))
+                    .shadow(color: .black.opacity(0.55), radius: 2, y: 0.8)
+                    .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+                    .frame(height: 20)
+                    .opacity(sublineText == nil ? 0 : 1)
+                    .allowsHitTesting(false)
+            }
         }
         .lineLimit(1)
         .minimumScaleFactor(0.5)

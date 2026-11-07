@@ -3,7 +3,7 @@
 ## 职责与事实来源
 
 - 界面读取 [`PlaybackModel`](../../Sources/SoftLive/Playback/PlaybackModel.swift)、[`SystemMonitor`](../../Sources/SoftLive/Monitor/SystemMonitor.swift) 和 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift)，通过模型方法发起播放控制、详情采样选择与结束进程；不直接访问播放器存储、采样器或网络。独立舞台的排版与特效见 [舞台模式](stage.md)。
-- [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是共享主菜单，两个状态栏项、右键桌面歌词/组件/舞台窗口及再次打开 App 都可访问。
+- [`AppMenu`](../../Sources/SoftLive/App/AppMenu.swift) 是共享主菜单，两个状态栏项及右键桌面歌词/组件/舞台窗口均可访问；再次打开 App、点击菜单「配置中心… (`⌘,`)」或点击监控面板底栏设置图标可打开 [`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift)。
 
 ## 应用图标与打包
 
@@ -12,9 +12,9 @@
 
 ## 状态栏
 
-- [`LyricsStatusBar`](../../Sources/SoftLive/UI/StatusBar/LyricsStatusBar.swift) 显示 `PlaybackModel.headline`，最大宽度 260 pt，长句截断。关闭状态栏歌词且开启系统监控时隐藏该项，释放菜单栏空间。
+- [`LyricsStatusBar`](../../Sources/SoftLive/UI/StatusBar/LyricsStatusBar.swift) 显示 `PlaybackModel.headline`，宽度上限由 `Preferences.statusBarWidthPreset`（`180 / 260 / 340 pt`）控制，长句截断。关闭状态栏歌词且开启系统监控时隐藏该项，释放菜单栏空间。
 - 无歌词文字时显示 18 × 18 pt 的单色 Sync 模板图标，随系统外观着色；有歌词时仅显示文字。128 × 128 px 模板由 [`BrandAssets`](../../Sources/SoftLive/UI/Branding/BrandAssets.swift) 缓存，与桌面组件和舞台窗口无封面占位共用，通过 SwiftPM 资源支持本地运行，App 打包时也复制到主资源目录。
-- [`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 使用 `52 × 22 pt` 非模板图像：左侧上下两行上传/下载紧凑数值，右侧 CPU / RAM / TMP 三根语义彩色柱，温度按 `0–100 °C` 映射。文字、底轨与语义颜色适配系统外观；字体和段落样式缓存，仅在 `DisplayKey`（文本、柱高步进或颜色分段）变化时重绘。
+- [`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 支持两种非模板图像样式：`网速 + 三色柱`（`52 × 22 pt`，左侧上下两行上传/下载紧凑数值 + 右侧 CPU / RAM / TMP 三根语义彩色柱）与 `仅三色柱`（`20 × 22 pt`），温度按 `0–100 °C` 映射，CPU 与温度告警阈值由 `Preferences` 控制。文字、底轨与语义颜色适配系统外观；字体和段落样式缓存，仅在 `DisplayKey`（样式、文本、柱高步进或颜色分段）变化时重绘。
 - 左键按下切换 `.nonactivatingPanel` 承载的 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)，展开期间状态栏按钮保持高亮；右键打开主菜单。首击直达控件，不激活 SoftLive；再次点击状态栏按钮、点击卡片外或按 `Esc` 收起（消去事件监听先于按钮动作触发时的同次点击重开）。
 - 详情页为 CPU / RAM / TMP：CPU 显示趋势、核心与 GPU 负载、Top 10 进程；RAM 显示趋势、内存构成与压力、Swap、Top 10 进程；TMP 显示趋势、部位热力、整机功耗与风扇。底栏显示完整上下行速率。数据来源、周期、按需采样和失败表现统一见 [系统监控](monitor.md)。
 - 进程行先点 `✕` 再确认 `结束`，确认期间固定列表避免排序导致误点；由 `SystemMonitor.terminateProcess` 执行结束。
@@ -26,7 +26,7 @@
 
 ### 桌面歌词
 
-[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift) 位于 `.floating` 层级，在全屏 App 上也显示。固定双行居中：上行逐字歌词，下行为翻译或下一句；空行仍保留高度。平时无背景，标准 SF Pro 字体配位图内双层阴影。
+[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift) 位于 `.floating` 层级，在全屏 App 上也显示。双行居中：上行逐字歌词，下行为翻译或下一句（由 `Preferences.desktopLyricsSublineMode` 控制「翻译优先 / 仅翻译 / 单行主句」，字号由 `Preferences.desktopLyricsSize` 提供 `22 / 26 / 30 pt` 三档）；双行模式下空行仍保留高度。平时无背景，标准 SF Pro 字体配位图内双层阴影。
 
 默认锁定并开启鼠标穿透。通过修饰键与鼠标释放事件判断唤醒：按住 `⌘` 移入后显示单层霜光玻璃背景和顶部控制栏（左侧显示 Sync 标志与当前曲目，中部在有歌词时提供 `±0.5s` 偏移与重置胶囊，右侧提供 `28 × 28 pt` 播放/暂停、锁定、隐藏按钮）；鼠标仍在卡片内时，松开 `⌘` 后仍可点击、拖动或双击切下一首，移出后恢复穿透。面板不可见时事件监听立即短路并复位，观察属性仅在值变化时赋值。
 
@@ -39,6 +39,16 @@
 - 无封面时显示 28 × 28 pt 的单色 Sync 标志，使用次级文字色；播放器选择按钮保留各播放器自己的图标。
 - 播放时展开曲目、封面、随封面强调色着色的进度条、细分割线与双行歌词，以及播放/暂停、关闭按钮。关闭通过 `PlaybackModel.closePlayback()` 退出目标播放器并收起卡片。
 - 进度条每秒刷新，时间用 `11 pt` 等宽整数格式化；组件关闭时不启动 `TimelineView` 调度。
+
+### 桌面配置中心
+
+[`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift) 为 `620 × 536 pt` 左右分栏配置窗口，禁用最大化按钮：
+
+- **左侧栏（`156 pt`）**：上方为原生系统设置风格的单行「播放器」与「监听」导航项（配 `22 × 22 pt` 圆角图标徽标与平铺选中态），底部为带完整彩色应用图标（`BrandAssets.appIcon`）的 `SoftLive` 入口，点击后在右侧展示产品说明、交互指南与架构隐私承诺。
+- **右侧内容区（`464 pt`）**：采用无冗余副文案的单列分组表单（每行固定 `34 pt` 高，分段器使用 `.fixedSize` 防止文字截断）：
+  - **播放器**：配置首选播放器、桌面常驻组件开关、状态栏歌词开关与最大宽度（`180 / 260 / 340 pt`）、桌面悬浮歌词开关/穿透锁定/字号（`22 / 26 / 30 pt`）/副句模式（`翻译优先 / 仅翻译 / 单行`）、演示舞台开关/律动风格（`流光 / 描金`）/星火特效。
+  - **监听**：配置状态栏监控总开关、状态栏样式（`网速 + 柱状图` / `仅柱状图`）、弹窗默认页面（`CPU / RAM / TMP`）、采样间隔（`1 秒 / 2 秒 / 5 秒`）以及 CPU / 内存 / 温度三项告警阈值。
+- **生命周期**：窗口关闭时 `ControlCenterState.isOpen` 置为 `false` 并隐藏宿主视图，卸载内部 SwiftUI 子树，关闭期间后台零观察开销。
 
 ## 逐字渲染
 

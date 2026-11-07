@@ -57,16 +57,26 @@ import Testing
         #expect(image.size == NSSize(width: 52, height: 22))
         #expect(image.tiffRepresentation != nil)
 
+        let compactImage = MonitorStatusBar.renderImage(for: metrics, style: .barsOnly)
+        #expect(compactImage.size == NSSize(width: 20, height: 22))
+
         // Crossing color thresholds within the same integer bar-height step must produce distinct DisplayKeys.
-        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.74))
-        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.76))
+        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.795))
+        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.805))
         #expect(cpuBelow.cpuBarSteps == cpuAbove.cpuBarSteps)
         #expect(cpuBelow != cpuAbove)
 
-        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.87))
-        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.89))
-        #expect(ramBelow.ramBarSteps == ramAbove.ramBarSteps)
-        #expect(ramBelow != ramAbove)
+        let customThresholdHit = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(cpuUsage: 0.72),
+            cpuThreshold: MonitorCPUAlertThreshold.low.fraction
+        )
+        #expect(customThresholdHit.cpuHigh)
+
+        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.84))
+        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.86))
+        #expect(ramBelow.ramBarSteps != ramAbove.ramBarSteps || ramBelow != ramAbove)
+        #expect(!ramBelow.ramWarning)
+        #expect(ramAbove.ramWarning)
 
         let tmpBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 54.0))
         let tmpAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 55.5))

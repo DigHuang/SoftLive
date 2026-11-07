@@ -18,9 +18,9 @@
 
 ## 运行路径
 
-1. **按偏好启停（2 秒周期）**：`SystemMonitor` 通过 `Observations` 监听 `Preferences.showsSystemMonitor`。
-   - 开启时立即记录一次 `ProcessSampler.captureBaseline()` 并执行 `poll()`，启动间隔 `2.0s`（`tolerance = 0.25s`）的 `Timer`。
-   - 在菜单中关闭「显示状态栏监控」时，立即 `invalidate()` 定时器并清空 60 秒历史队列，后台 0 唤醒。
+1. **按偏好启停与动态采样周期（`1s / 2s / 5s`）**：`SystemMonitor` 通过 `Observations` 监听 `Preferences.showsSystemMonitor`、`Preferences.monitorSampleInterval` 与 `Preferences.monitorDefaultTab`。
+   - 开启时立即记录一次 `ProcessSampler.captureBaseline()` 并执行 `poll()`，按所选周期（默认 `2.0s`）启动 `Timer`；修改采样间隔时实时重建定时器。
+   - 关闭「显示状态栏监控」时，立即 `invalidate()` 定时器并清空历史队列，后台 0 唤醒。
 2. **首次基线与差值**：
    - CPU、单进程 CPU 和网速都依赖相邻两次采样的计数器差值，因此第 1 次采样建立基线，后续采样输出真实速率。
 3. **温度低频复用与按当前标签页按需详情采样**：

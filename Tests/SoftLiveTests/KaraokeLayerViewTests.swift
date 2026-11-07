@@ -262,5 +262,25 @@ struct KaraokeLayerViewTests {
         let stageRep = try #require(stageHost.bitmapImageRepForCachingDisplay(in: stageHost.bounds))
         stageHost.cacheDisplay(in: stageHost.bounds, to: stageRep)
         #expect(stageRep.pixelsWide >= Int(StageWindow.defaultSize.width))
+
+        let monitor = SystemMonitor(preferences: preferences)
+        let centerState = ControlCenterState()
+        centerState.isOpen = true
+        for section in ControlCenterSection.allCases {
+            centerState.selectedSection = section
+            let centerHost = NSHostingView(
+                rootView: ControlCenterView(
+                    model: model,
+                    monitor: monitor,
+                    preferences: preferences,
+                    state: centerState
+                )
+            )
+            centerHost.frame = NSRect(origin: .zero, size: ControlCenterWindow.windowSize)
+            centerHost.layoutSubtreeIfNeeded()
+            let centerRep = try #require(centerHost.bitmapImageRepForCachingDisplay(in: centerHost.bounds))
+            centerHost.cacheDisplay(in: centerHost.bounds, to: centerRep)
+            #expect(centerRep.pixelsWide >= Int(ControlCenterWindow.windowSize.width))
+        }
     }
 }
