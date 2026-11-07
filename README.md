@@ -37,6 +37,7 @@ Apple Music 首次使用需允许「自动化 → Music」授权；网易云无�
 
 | 文档 | 内容 |
 | --- | --- |
+| [更新日志](CHANGELOG.md) | 版本演进、新增功能、性能优化与问题修复记录 |
 | [AGENTS.md](AGENTS.md) | 开发入口、目录职责、命令与验证边界 |
 | [需求](docs/requirements.md) | 目标、验收标准、明确不做的事与待验证项 |
 | [子系统参考](docs/subsystems/README.md) | 各子系统的运行方式、约束与实测依据 |
@@ -53,6 +54,9 @@ Apple Music 首次使用需允许「自动化 → Music」授权；网易云无�
 
 ## 致谢
 
-- **方案参考**：[LyricsX](https://github.com/ddddxxx/LyricsX)（锚点外推、匹配打分）、[Lyrimuse](https://github.com/Yudaotor/Lyrimuse)、[Lyric Fever](https://github.com/aviwad/LyricFever)、[Stats](https://github.com/exelban/stats)（系统指标采样）。
 - **网易云 `lastPlaying` 读取方法**：[CloudLyrics-for-macOS](https://github.com/hellomyonly55/CloudLyrics-for-macOS)。
 - **歌词来源**：网易云音乐、[LRCLIB](https://lrclib.net)。
+
+## 许可证
+
+[MIT](LICENSE)
