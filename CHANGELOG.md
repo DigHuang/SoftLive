@@ -11,11 +11,18 @@ The format is based on [Keep a Changelog 2.0.0](https://keepachangelog.com/en/2.
 ### Added
 
 - **Sync Frost Brand Icon**: Added editable ribbon SVG assets, a native macOS 26 `.icon` project, and preview assets; `Scripts/build-app.sh` compiles the app icon bundle via `actool`. ([#14])
+- **Desktop Configuration Center**: Added a `640 × 636 pt` split-view configuration window (`播放器` / `监听` tabs plus a bottom-left `SoftLive` product overview entry), accessible by reopening the app, pressing `⌘,` from the menu, or clicking the settings button in the monitor popover footer; unloads its SwiftUI subtree when closed for zero background overhead. ([#16])
+- **Customizable Lyrics & Monitor Preferences**: Added user preferences for menu bar lyrics max-width (`180 / 260 / 340 pt`), desktop floating lyrics font size (`22 / 26 / 30 pt`) and subline mode (`翻译优先 / 仅翻译 / 单行`), menu bar monitor display style (`52 × 22 pt` rate + bars or `20 × 22 pt` bars-only), colored vs. monochrome template monitor bars, default monitor popover tab, background sampling interval (`1s / 2s / 5s`), and `CPU / RAM / TMP` alert thresholds. ([#16], [#17])
 
 ### Changed
 
 - **Menu Bar Mark**: Displays an 18 pt monochrome Sync template icon (adapting to light/dark system appearance) when no lyric text is shown, replacing the generic musical note symbol. ([#14])
-- **Desktop Widget Artwork Placeholder**: Displays the monochrome Sync mark when no album artwork is available, sharing the brand template with the menu bar. ([#14])
+- **Desktop Widget & Stage Placeholders**: Displays the monochrome Sync mark when no album artwork is available across both the desktop widget and Stage Mode, sharing the brand template with the menu bar. ([#14], [#16])
+- **Desktop Widget, Floating Lyrics & Stage HUD Refinement**: Added cached artwork-derived ambient aura lighting (`StagePalette.cached(for:)`) and adaptive Light/Dark controls to the desktop widget; upgraded the `⌘`-awake bar in desktop lyrics with track title and inline `±0.5s` offset pills; switched Stage Mode to a `darkAqua` four-corner HUD layout with double-click to skip tracks. ([#16])
+
+### Fixed
+
+- **Status Bar Monitor Second-Click Dismissal**: Prevented outside-click event monitors from racing with `NSStatusBarButton` action delivery and reopening the monitor popover on a second click, and restricted popover hit-testing to the inner card bounds. ([#16])
 
 ## [0.0.1] - 2026-11-06
 
@@ -56,3 +63,5 @@ Initial release of SoftLive: real-time word-by-word synced lyrics for Apple Musi
 [#9]: https://github.com/DigHuang/SoftLive/pull/9
 [#10]: https://github.com/DigHuang/SoftLive/pull/10
 [#14]: https://github.com/DigHuang/SoftLive/pull/14
+[#16]: https://github.com/DigHuang/SoftLive/pull/16
+[#17]: https://github.com/DigHuang/SoftLive/pull/17

@@ -157,6 +157,7 @@ final class Preferences {
     var stageSparks: Bool { didSet { defaults.set(stageSparks, forKey: Key.stageSparks) } }
     var preferredPlayer: PlayerKind { didSet { defaults.set(preferredPlayer.rawValue, forKey: Key.player) } }
     var monitorStatusBarStyle: MonitorStatusBarStyle { didSet { defaults.set(monitorStatusBarStyle.rawValue, forKey: Key.monitorStyle) } }
+    var monitorColoredBars: Bool { didSet { defaults.set(monitorColoredBars, forKey: Key.monitorColoredBars) } }
     var monitorDefaultTab: MonitorTab { didSet { defaults.set(monitorDefaultTab.rawValue, forKey: Key.monitorDefaultTab) } }
     var monitorSampleInterval: MonitorSampleInterval { didSet { defaults.set(monitorSampleInterval.rawValue, forKey: Key.monitorInterval) } }
     var monitorCPUAlertThreshold: MonitorCPUAlertThreshold { didSet { defaults.set(monitorCPUAlertThreshold.rawValue, forKey: Key.monitorCPUAlert) } }
@@ -177,6 +178,7 @@ final class Preferences {
         static let stageSparks = "stageSparks"
         static let player = "preferredPlayer"
         static let monitorStyle = "monitorStatusBarStyle"
+        static let monitorColoredBars = "monitorColoredBars"
         static let monitorDefaultTab = "monitorDefaultTab"
         static let monitorInterval = "monitorSampleInterval"
         static let monitorCPUAlert = "monitorCPUAlertThreshold"
@@ -202,6 +204,7 @@ final class Preferences {
             Key.stageSparks: true,
             Key.player: PlayerKind.netEase.rawValue,
             Key.monitorStyle: MonitorStatusBarStyle.rateAndBars.rawValue,
+            Key.monitorColoredBars: true,
             Key.monitorDefaultTab: MonitorTab.cpu.rawValue,
             Key.monitorInterval: MonitorSampleInterval.standard.rawValue,
             Key.monitorCPUAlert: MonitorCPUAlertThreshold.standard.rawValue,
@@ -221,6 +224,7 @@ final class Preferences {
         stageSparks = defaults.bool(forKey: Key.stageSparks)
         preferredPlayer = defaults.string(forKey: Key.player).flatMap(PlayerKind.init(rawValue:)) ?? .netEase
         monitorStatusBarStyle = defaults.string(forKey: Key.monitorStyle).flatMap(MonitorStatusBarStyle.init(rawValue:)) ?? .rateAndBars
+        monitorColoredBars = defaults.bool(forKey: Key.monitorColoredBars)
         monitorDefaultTab = defaults.string(forKey: Key.monitorDefaultTab).flatMap(MonitorTab.init(rawValue:)) ?? .cpu
         let rawInterval = defaults.double(forKey: Key.monitorInterval)
         monitorSampleInterval = MonitorSampleInterval(rawValue: rawInterval) ?? .standard

@@ -422,6 +422,13 @@ struct ControlCenterView: View {
 
                 rowDivider
 
+                formToggleRow("柱状图彩色显示", isOn: Binding(
+                    get: { preferences.monitorColoredBars },
+                    set: { preferences.monitorColoredBars = $0 }
+                ))
+
+                rowDivider
+
                 formRow("弹窗默认页面") {
                     segmentedPicker(
                         options: MonitorTab.allCases,
