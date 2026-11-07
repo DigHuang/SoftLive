@@ -16,6 +16,22 @@ struct StagePalette: Equatable {
         accent: NSColor(deviceRed: 0.52, green: 0.82, blue: 1.0, alpha: 1)
     )
 
+    private static var lastCachedID: ObjectIdentifier?
+    private static var lastCachedPalette: StagePalette = .fallback
+
+    /// Returns a palette for `image`, reusing the last extracted result while the `NSImage` instance is unchanged.
+    static func cached(for image: NSImage?) -> StagePalette {
+        guard let image else { return .fallback }
+        let id = ObjectIdentifier(image)
+        if id == lastCachedID {
+            return lastCachedPalette
+        }
+        let extracted = extract(from: image)
+        lastCachedID = id
+        lastCachedPalette = extracted
+        return extracted
+    }
+
     static func extract(from image: NSImage?) -> StagePalette {
         guard let image,
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)

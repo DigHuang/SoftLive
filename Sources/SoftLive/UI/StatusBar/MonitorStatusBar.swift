@@ -7,12 +7,18 @@ import SwiftUI
 /// would otherwise replace the foreground app's menu bar and cause macOS WindowServer to
 /// reflow/teleport status bar items across the camera notch on click.
 private final class MonitorPopoverPanel: NSPanel {
+    private static let outsideDismissSuppressionWindow: Duration = .milliseconds(300)
+    private static let postShowIgnoreWindow: Duration = .milliseconds(150)
+
     var onClose: (() -> Void)?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private weak var statusBarWindow: NSWindow?
     private weak var statusBarButton: NSStatusBarButton?
     private var hostView: FirstMouseHostingView<MonitorPopoverView>?
+    private var lastShowTime: ContinuousClock.Instant?
+    private var lastOutsideDismissTime: ContinuousClock.Instant?
+    private var openingEventNumber: Int?
 
     init(rootView: MonitorPopoverView) {
         let size = MonitorPopoverView.panelSize
@@ -42,9 +48,12 @@ private final class MonitorPopoverPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    func show(below button: NSStatusBarButton) {
+    func show(below button: NSStatusBarButton, now: ContinuousClock.Instant = .now) {
         statusBarWindow = button.window
         statusBarButton = button
+        lastOutsideDismissTime = nil
+        lastShowTime = now
+        openingEventNumber = NSApp.currentEvent?.eventNumber
         let size = MonitorPopoverView.panelSize
         let margin = MonitorPopoverView.margin
         if let buttonWindow = button.window {
@@ -68,21 +77,70 @@ private final class MonitorPopoverPanel: NSPanel {
         installMonitors()
     }
 
-    func dismiss() {
+    func dismiss(fromOutsideClick: Bool = false, now: ContinuousClock.Instant = .now) {
         removeMonitors()
-        statusBarButton?.highlight(false)
+        clearButtonHighlight()
         guard isVisible else { return }
+        lastOutsideDismissTime = fromOutsideClick ? now : nil
         contentView?.isHidden = true
         orderOut(nil)
         onClose?()
+    }
+
+    func consumeRecentOutsideDismiss(now: ContinuousClock.Instant = .now) -> Bool {
+        guard let lastOutsideDismissTime else { return false }
+        self.lastOutsideDismissTime = nil
+        let isRecent = now - lastOutsideDismissTime < Self.outsideDismissSuppressionWindow
+        if isRecent {
+            clearButtonHighlight()
+        }
+        return isRecent
+    }
+
+    private func clearButtonHighlight() {
+        let button = statusBarButton
+        button?.highlight(false)
+        DispatchQueue.main.async { [weak self, weak button] in
+            if self?.isVisible != true {
+                button?.highlight(false)
+            }
+        }
+    }
+
+    private func isPointInsideCard(_ pointInWindow: NSPoint) -> Bool {
+        let margin = MonitorPopoverView.margin
+        let fromTop = frame.height - pointInWindow.y
+        let maxTop = (hostView?.activeTopHeight ?? frame.height) - margin
+        return pointInWindow.x >= margin
+            && pointInWindow.x <= frame.width - margin
+            && fromTop >= margin
+            && fromTop <= maxTop
+    }
+
+    private func isOpeningClickEvent(_ event: NSEvent, now: ContinuousClock.Instant = .now) -> Bool {
+        if let openingEventNumber, event.eventNumber == openingEventNumber {
+            return true
+        }
+        guard let lastShowTime, now - lastShowTime < Self.postShowIgnoreWindow else {
+            return false
+        }
+        if let eventWindow = event.window,
+           eventWindow === statusBarWindow || eventWindow === statusBarButton?.window {
+            return true
+        }
+        if let buttonWindow = statusBarButton?.window ?? statusBarWindow {
+            return buttonWindow.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation)
+        }
+        return false
     }
 
     private func installMonitors() {
         removeMonitors()
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            self?.dismiss()
+        ) { [weak self] event in
+            guard let self, !self.isOpeningClickEvent(event) else { return }
+            self.dismiss(fromOutsideClick: true)
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .keyDown]
@@ -103,23 +161,13 @@ private final class MonitorPopoverPanel: NSPanel {
                 self.dismiss()
                 return nil
             }
-            if let eventWindow = event.window {
-                if eventWindow === self.statusBarWindow {
-                    return event
-                }
-                if eventWindow === self {
-                    if let host = self.hostView, let activeTop = host.activeTopHeight {
-                        let pt = event.locationInWindow
-                        let fromTop = self.frame.height - pt.y
-                        if fromTop > activeTop {
-                            self.dismiss()
-                            return event
-                        }
-                    }
-                    return event
-                }
+            if self.isOpeningClickEvent(event) {
+                return event
             }
-            self.dismiss()
+            if event.window === self, self.isPointInsideCard(event.locationInWindow) {
+                return event
+            }
+            self.dismiss(fromOutsideClick: true)
             return event
         }
     }
@@ -146,10 +194,12 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if let activeTopHeight {
-            let local = convert(point, from: superview)
-            let fromTop = isFlipped ? local.y : bounds.height - local.y
-            if fromTop > activeTopHeight { return nil }
+        let local = convert(point, from: superview)
+        let fromTop = isFlipped ? local.y : bounds.height - local.y
+        let margin = MonitorPopoverView.margin
+        let maxTop = (activeTopHeight ?? bounds.height) - margin
+        if local.x < margin || local.x > bounds.width - margin || fromTop < margin || fromTop > maxTop {
+            return nil
         }
         return super.hitTest(point)
     }
@@ -275,6 +325,32 @@ final class MonitorStatusBar: NSObject {
         }
     }
 
+    var isPopoverVisible: Bool {
+        panel?.isVisible ?? false
+    }
+
+    func handleLeftClick(now: ContinuousClock.Instant = .now) {
+        guard let button = item.button, let panel else { return }
+        if panel.isVisible {
+            panel.dismiss(now: now)
+        } else if panel.consumeRecentOutsideDismiss(now: now) {
+            return
+        } else {
+            monitor.setDetailActive(true)
+            panel.show(below: button, now: now)
+        }
+    }
+
+    func dismissFromOutsideClick(now: ContinuousClock.Instant = .now) {
+        panel?.dismiss(fromOutsideClick: true, now: now)
+    }
+
+    isolated deinit {
+        observeTask?.cancel()
+        panel?.dismiss()
+        NSStatusBar.system.removeStatusItem(item)
+    }
+
     @objc private func statusItemClicked() {
         let eventType = NSApp.currentEvent?.type
         if eventType == .rightMouseUp || eventType == .rightMouseDown {
@@ -283,13 +359,7 @@ final class MonitorStatusBar: NSObject {
             menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
             return
         }
-        guard let button = item.button, let panel else { return }
-        if panel.isVisible {
-            panel.dismiss()
-        } else {
-            monitor.setDetailActive(true)
-            panel.show(below: button)
-        }
+        handleLeftClick()
     }
 
     static func renderImage(for metrics: SystemMetrics) -> NSImage {

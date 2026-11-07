@@ -110,6 +110,8 @@ struct StageCanvasViewTests {
     }
 
     @Test func extractsPaletteFromArtworkAndCachesByIdentity() {
+        #expect(StagePalette.cached(for: nil) == .fallback)
+
         let image = NSImage(size: NSSize(width: 24, height: 24))
         image.lockFocus()
         NSColor(deviceRed: 0.92, green: 0.28, blue: 0.42, alpha: 1).setFill()
@@ -121,7 +123,8 @@ struct StageCanvasViewTests {
 
         let state = StageWindowState()
         let first = state.palette(for: image)
-        let second = state.palette(for: image)
+        let second = StagePalette.cached(for: image)
+        #expect(first == palette)
         #expect(first == second)
     }
 

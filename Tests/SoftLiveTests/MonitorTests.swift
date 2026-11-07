@@ -97,6 +97,54 @@ import Testing
         monitor.setDetailActive(false)
         #expect(!monitor.isDetailActive)
     }
+
+    @Test func statusBarSecondClickClosesPopoverEvenAfterMonitorDismissal() {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+        let statusBar = MonitorStatusBar(monitor: monitor, preferences: prefs, menu: NSMenu())
+        let t0 = ContinuousClock.Instant.now
+
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // 1st click opens the popover.
+        statusBar.handleLeftClick(now: t0)
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        // Direct 2nd click closes the popover.
+        let t1 = t0.advanced(by: .seconds(1))
+        statusBar.handleLeftClick(now: t1)
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // Re-open the popover.
+        let t2 = t1.advanced(by: .seconds(1))
+        statusBar.handleLeftClick(now: t2)
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        // Simulate macOS delivering the 2nd click to the global/local event monitor first,
+        // followed milliseconds later by NSStatusBarButton's action for the same click.
+        let t3 = t2.advanced(by: .seconds(1))
+        statusBar.dismissFromOutsideClick(now: t3)
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(20)))
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+
+        // Because the 2nd click consumed the suppression window, an immediate 3rd click re-opens cleanly.
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(100)))
+        #expect(statusBar.isPopoverVisible)
+        #expect(monitor.isDetailActive)
+
+        statusBar.handleLeftClick(now: t3.advanced(by: .milliseconds(200)))
+        #expect(!statusBar.isPopoverVisible)
+        #expect(!monitor.isDetailActive)
+    }
 }
 
 @Suite struct SystemSamplersTests {

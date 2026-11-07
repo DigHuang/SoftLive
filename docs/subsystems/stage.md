@@ -4,7 +4,8 @@
 
 - [`StageWindow`](../../Sources/SoftLive/UI/Stage/StageWindow.swift) 是独立 `.nonactivatingPanel`，由 `Preferences.showsStageWindow` 控制显示，默认关闭。宿主负责首击、拖动、右键主菜单与位置保存，SwiftUI 控制栏通过 `PlaybackModel` 发起播放控制。
 - [`StageCanvasView`](../../Sources/SoftLive/UI/Stage/StageCanvasView.swift) 接收歌词、播放锚点、偏移、风格与封面，编排图层和动画。不直接读取播放器、请求网络或推进播放状态。
-- [`StagePalette`](../../Sources/SoftLive/UI/Stage/StagePalette.swift) 将封面降采样后提取背景、光球与强调色；`StageWindowState` 按图片对象引用缓存结果，无封面时使用默认色盘。
+- [`StagePalette`](../../Sources/SoftLive/UI/Stage/StagePalette.swift) 将封面降采样后提取背景、光球与强调色，`StagePalette.cached(for:)` 按图片对象引用缓存结果供舞台与桌面组件共用，无封面时使用默认色盘。
+- 窗口固定使用 `darkAqua` 外观；悬浮控制采用四角无底栏布局（左上关闭/缩放圆钮、右上共心胶囊风格分段器、左下无底框封面与曲目、右下播放/暂停圆钮），双击舞台区域可切下一首，无封面时复用 [`BrandAssets.syncTemplate`](../../Sources/SoftLive/UI/Branding/BrandAssets.swift)。
 - 两种 `StageStyle` 及星火开关由 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift) 持久化。
 
 渲染内部按职责拆分，各 helper 不持有视图或读取其私有状态：
