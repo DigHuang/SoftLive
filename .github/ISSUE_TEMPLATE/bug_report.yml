@@ -1,0 +1,65 @@
+name: 🐛 Bug Report
+description: Report a lyrics sync issue, UI rendering glitch, system monitor error, or crash
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! Before submitting, please check the [Known Limitations](https://github.com/DigHuang/SoftLive#known-limitations) and [Subsystem Reference](https://github.com/DigHuang/SoftLive/blob/main/docs/subsystems/README.md).
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Menu Bar Lyrics / Desktop Floating Lyrics / Desktop Widget
+        - Stage Mode Window
+        - NetEase Cloud Music Playback & Seek Sync
+        - Apple Music Playback & Seek Sync
+        - Lyrics Parsing & Translation Matching (YRC / LRC / LRCLIB)
+        - Menu Bar System Monitor & Popover (CPU / RAM / TMP)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: player
+    attributes:
+      label: Music Player
+      options:
+        - NetEase Cloud Music (macOS client)
+        - Apple Music
+        - Not player-related (e.g. System Monitor or UI interaction)
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, chip model (e.g. Apple M4), and SoftLive version or commit
+      placeholder: "macOS 26.4 · Apple M4 · SoftLive v0.0.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What Happened & Steps to Reproduce
+      description: Describe the exact steps, expected behavior, and actual behavior (include track title / NetEase song ID if specific to a song)
+      placeholder: |
+        1. Play song ID `...` in NetEase Cloud Music
+        2. Seek to `01:20`
+        3. Expected: Lyrics sync within ~2s; Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostic Logs (Optional but recommended)
+      description: |
+        Run the following command in Terminal to capture the last 10 minutes of SoftLive logs:
+        `/usr/bin/log show --last 10m --info --predicate 'subsystem == "dev.softlive.SoftLive"' --style compact`
+      render: shell

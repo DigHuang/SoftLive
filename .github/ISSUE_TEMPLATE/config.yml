@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Subsystem Architecture & Known Limitations
+    url: https://github.com/DigHuang/SoftLive/blob/main/docs/subsystems/README.md
+    about: Read how playback tracking, LevelDB seek calibration, karaoke rendering, and system telemetry work
