@@ -19,9 +19,16 @@ import Testing
         #expect(SystemMetrics.formatWatts(-1) == "-- W")
         #expect(SystemMetrics.formatWatts(18.52) == "18.5 W")
 
+        L10n.language = .zhHans
         #expect(MemoryPressureLevel.normal.label == "压力正常")
         #expect(MemoryPressureLevel.warning.label == "压力偏高")
         #expect(MemoryPressureLevel.critical.label == "压力吃紧")
+
+        L10n.language = .en
+        #expect(MemoryPressureLevel.normal.label == "Normal")
+        #expect(MemoryPressureLevel.warning.label == "Elevated")
+        #expect(MemoryPressureLevel.critical.label == "Critical")
+        L10n.language = .system
 
         #expect(SystemMetrics.thermalProgress(nil) == 0)
         #expect(SystemMetrics.thermalProgress(0) == 0)

@@ -155,7 +155,7 @@ struct DesktopWidgetView: View {
                 .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: playback != nil ? 3 : 4) {
-                Text(playback?.track.title ?? recent?.title ?? "未在播放")
+                Text(playback?.track.title ?? recent?.title ?? L10n.tr("未在播放", "Not Playing"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                 Text(subtitle(playback: playback, selected: selected, recent: recent))
@@ -180,12 +180,12 @@ struct DesktopWidgetView: View {
                     circleButton(
                         icon: model.isPlaying ? "pause.fill" : "play.fill",
                         isProminent: true,
-                        help: model.isPlaying ? "暂停" : "继续播放",
+                        help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Resume"),
                         action: model.togglePlayPause
                     )
                     circleButton(
                         icon: "xmark",
-                        help: "关闭",
+                        help: L10n.tr("关闭", "Close"),
                         action: model.closePlayback
                     )
                 }
@@ -253,7 +253,7 @@ struct DesktopWidgetView: View {
         HStack(spacing: 5) {
             Image(systemName: "play.fill")
                 .font(.system(size: 10, weight: .bold))
-            Text("播放")
+            Text(L10n.tr("播放", "Play"))
                 .font(.system(size: 12, weight: .semibold))
         }
         .foregroundStyle(.primary)
@@ -264,7 +264,7 @@ struct DesktopWidgetView: View {
             Capsule().strokeBorder(controlBorder, lineWidth: 0.5)
         }
         .contentShape(.capsule)
-        .help("启动 \(selected.displayName) 并播放")
+        .help(L10n.tr("启动 \(selected.displayName) 并播放", "Launch \(selected.displayName) and play"))
         .onTapGesture {
             model.play(selected)
         }

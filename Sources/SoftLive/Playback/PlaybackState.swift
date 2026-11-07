@@ -7,7 +7,7 @@ enum PlayerKind: String, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .appleMusic: "Apple Music"
-        case .netEase: "网易云音乐"
+        case .netEase: L10n.tr("网易云音乐", "NetEase Music")
         }
     }
 

@@ -29,6 +29,7 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp "$ICON_BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ICON_BUILD_DIR/Assets.car" "$APP/Contents/Resources/Assets.car"
 cp Sources/SoftLive/UI/Branding/Resources/SyncTemplate.png "$APP/Contents/Resources/SyncTemplate.png"
+cp -R Resources/zh-Hans.lproj Resources/en.lproj "$APP/Contents/Resources/"
 codesign --force --sign "${SIGN_IDENTITY:--}" "$APP"
 echo "Built $APP"
 

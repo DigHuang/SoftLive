@@ -127,9 +127,9 @@ enum MemoryPressureLevel: Int, Equatable, Sendable {
 
     var label: String {
         switch self {
-        case .normal: "压力正常"
-        case .warning: "压力偏高"
-        case .critical: "压力吃紧"
+        case .normal: L10n.tr("压力正常", "Normal")
+        case .warning: L10n.tr("压力偏高", "Elevated")
+        case .critical: L10n.tr("压力吃紧", "Critical")
         }
     }
 }

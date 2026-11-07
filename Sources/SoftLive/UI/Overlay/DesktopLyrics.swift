@@ -219,19 +219,19 @@ struct DesktopLyricsView: View {
 
             if model.lyrics != nil {
                 HStack(spacing: 4) {
-                    offsetPill("-0.5s", help: "歌词延后 0.5 秒") {
+                    offsetPill("-0.5s", help: L10n.tr("歌词延后 0.5 秒", "Delay lyrics by 0.5s")) {
                         model.offset -= Self.offsetStep
                     }
                     if model.offset != 0 {
                         offsetPill(
                             String(format: "%+.1fs", model.offset),
                             isHighlighted: true,
-                            help: "点击重置歌词偏移"
+                            help: L10n.tr("点击重置歌词偏移", "Click to reset lyrics offset")
                         ) {
                             model.offset = 0
                         }
                     }
-                    offsetPill("+0.5s", help: "歌词提前 0.5 秒") {
+                    offsetPill("+0.5s", help: L10n.tr("歌词提前 0.5 秒", "Advance lyrics by 0.5s")) {
                         model.offset += Self.offsetStep
                     }
                 }
@@ -240,16 +240,18 @@ struct DesktopLyricsView: View {
             HStack(spacing: 5) {
                 barButton(
                     icon: model.isPlaying ? "pause.fill" : "play.fill",
-                    help: model.isPlaying ? "暂停" : "继续播放",
+                    help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Resume"),
                     action: model.togglePlayPause
                 )
                 barButton(
                     icon: preferences.desktopLyricsLocked ? "lock.fill" : "lock.open.fill",
-                    help: preferences.desktopLyricsLocked ? "已开启穿透（按住 ⌘ 移入唤醒；点击改为普通悬停唤醒）" : "已解锁（点击开启鼠标穿透）"
+                    help: preferences.desktopLyricsLocked
+                        ? L10n.tr("已开启穿透（按住 ⌘ 移入唤醒；点击改为普通悬停唤醒）", "Click-through enabled (Hold ⌘ to wake; click to wake on normal hover)")
+                        : L10n.tr("已解锁（点击开启鼠标穿透）", "Unlocked (Click to enable click-through)")
                 ) {
                     preferences.desktopLyricsLocked.toggle()
                 }
-                barButton(icon: "xmark", help: "隐藏桌面歌词") {
+                barButton(icon: "xmark", help: L10n.tr("隐藏桌面歌词", "Hide Desktop Lyrics")) {
                     interaction.isAwake = false
                     preferences.showsDesktopLyrics = false
                 }

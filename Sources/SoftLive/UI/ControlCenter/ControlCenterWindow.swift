@@ -13,9 +13,9 @@ enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .player: "播放器"
-        case .monitor: "监听"
-        case .about: "产品说明"
+        case .player: L10n.tr("播放器", "Player")
+        case .monitor: L10n.tr("监听", "Monitor")
+        case .about: L10n.tr("产品说明", "About")
         }
     }
 
@@ -150,7 +150,8 @@ struct ControlCenterView: View {
                     .frame(maxHeight: .infinity)
 
                 detailPane
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(width: ControlCenterWindow.windowSize.width - Self.sidebarWidth - 0.5)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
             }
             .frame(
                 width: ControlCenterWindow.windowSize.width,
@@ -293,8 +294,8 @@ struct ControlCenterView: View {
 
     private var playerSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
-            formGroup(title: "音源与状态栏") {
-                formRow("首选播放器") {
+            formGroup(title: L10n.tr("音源与状态栏", "Source & Status Bar")) {
+                formRow(L10n.tr("首选播放器", "Preferred Player")) {
                     segmentedPicker(
                         options: PlayerKind.allCases,
                         selection: preferences.preferredPlayer,
@@ -307,21 +308,21 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formToggleRow("桌面常驻组件", isOn: Binding(
+                formToggleRow(L10n.tr("桌面常驻组件", "Desktop Widget"), isOn: Binding(
                     get: { preferences.showsDesktopWidget },
                     set: { preferences.showsDesktopWidget = $0 }
                 ))
 
                 rowDivider
 
-                formToggleRow("状态栏歌词", isOn: Binding(
+                formToggleRow(L10n.tr("状态栏歌词", "Status Bar Lyrics"), isOn: Binding(
                     get: { preferences.showsStatusBarLyrics },
                     set: { preferences.showsStatusBarLyrics = $0 }
                 ))
 
                 rowDivider
 
-                formRow("状态栏最大宽度") {
+                formRow(L10n.tr("状态栏最大宽度", "Status Bar Max Width")) {
                     segmentedPicker(
                         options: StatusBarWidthPreset.allCases,
                         selection: preferences.statusBarWidthPreset,
@@ -332,22 +333,22 @@ struct ControlCenterView: View {
                 }
             }
 
-            formGroup(title: "桌面悬浮歌词") {
-                formToggleRow("显示桌面歌词", isOn: Binding(
+            formGroup(title: L10n.tr("桌面悬浮歌词", "Desktop Lyrics")) {
+                formToggleRow(L10n.tr("显示桌面歌词", "Show Desktop Lyrics"), isOn: Binding(
                     get: { preferences.showsDesktopLyrics },
                     set: { preferences.showsDesktopLyrics = $0 }
                 ))
 
                 rowDivider
 
-                formToggleRow("锁定鼠标穿透（按住 ⌘ 唤醒）", isOn: Binding(
+                formToggleRow(L10n.tr("锁定鼠标穿透（按住 ⌘ 唤醒）", "Click-Through Lock (Hold ⌘ to Wake)"), isOn: Binding(
                     get: { preferences.desktopLyricsLocked },
                     set: { preferences.desktopLyricsLocked = $0 }
                 ))
 
                 rowDivider
 
-                formRow("歌词字号") {
+                formRow(L10n.tr("歌词字号", "Font Size")) {
                     segmentedPicker(
                         options: DesktopLyricsSize.allCases,
                         selection: preferences.desktopLyricsSize,
@@ -359,7 +360,7 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow("副句内容") {
+                formRow(L10n.tr("副句内容", "Subline Mode")) {
                     segmentedPicker(
                         options: DesktopLyricsSublineMode.allCases,
                         selection: preferences.desktopLyricsSublineMode,
@@ -370,15 +371,15 @@ struct ControlCenterView: View {
                 }
             }
 
-            formGroup(title: "演示舞台") {
-                formToggleRow("开启演示舞台", isOn: Binding(
+            formGroup(title: L10n.tr("演示舞台", "Stage Mode")) {
+                formToggleRow(L10n.tr("开启演示舞台", "Enable Stage Window"), isOn: Binding(
                     get: { preferences.showsStageWindow },
                     set: { preferences.showsStageWindow = $0 }
                 ))
 
                 rowDivider
 
-                formRow("律动风格") {
+                formRow(L10n.tr("律动风格", "Kinetic Style")) {
                     segmentedPicker(
                         options: StageStyle.allCases,
                         selection: preferences.stageStyle,
@@ -390,7 +391,7 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formToggleRow("星火粒子特效", isOn: Binding(
+                formToggleRow(L10n.tr("星火粒子特效", "Spark Particles"), isOn: Binding(
                     get: { preferences.stageSparks },
                     set: { preferences.stageSparks = $0 }
                 ))
@@ -402,15 +403,15 @@ struct ControlCenterView: View {
 
     private var monitorSettings: some View {
         VStack(alignment: .leading, spacing: 20) {
-            formGroup(title: "状态栏与面板") {
-                formToggleRow("显示状态栏监控", isOn: Binding(
+            formGroup(title: L10n.tr("状态栏与面板", "Status Bar & Popover")) {
+                formToggleRow(L10n.tr("显示状态栏监控", "Show System Monitor"), isOn: Binding(
                     get: { preferences.showsSystemMonitor },
                     set: { preferences.showsSystemMonitor = $0 }
                 ))
 
                 rowDivider
 
-                formRow("状态栏样式") {
+                formRow(L10n.tr("状态栏样式", "Status Bar Style")) {
                     segmentedPicker(
                         options: MonitorStatusBarStyle.allCases,
                         selection: preferences.monitorStatusBarStyle,
@@ -422,14 +423,14 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formToggleRow("柱状图彩色显示", isOn: Binding(
+                formToggleRow(L10n.tr("柱状图彩色显示", "Colored Bars"), isOn: Binding(
                     get: { preferences.monitorColoredBars },
                     set: { preferences.monitorColoredBars = $0 }
                 ))
 
                 rowDivider
 
-                formRow("弹窗默认页面") {
+                formRow(L10n.tr("弹窗默认页面", "Default Popover Tab")) {
                     segmentedPicker(
                         options: MonitorTab.allCases,
                         selection: preferences.monitorDefaultTab,
@@ -440,8 +441,8 @@ struct ControlCenterView: View {
                 }
             }
 
-            formGroup(title: "采样与告警阈值") {
-                formRow("采样间隔") {
+            formGroup(title: L10n.tr("采样与告警阈值", "Sampling & Alert Thresholds")) {
+                formRow(L10n.tr("采样间隔", "Refresh Interval")) {
                     segmentedPicker(
                         options: MonitorSampleInterval.allCases,
                         selection: preferences.monitorSampleInterval,
@@ -453,7 +454,7 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow("CPU 告警阈值") {
+                formRow(L10n.tr("CPU 告警阈值", "CPU Alert Threshold")) {
                     segmentedPicker(
                         options: MonitorCPUAlertThreshold.allCases,
                         selection: preferences.monitorCPUAlertThreshold,
@@ -465,7 +466,7 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow("内存告警阈值") {
+                formRow(L10n.tr("内存告警阈值", "RAM Alert Threshold")) {
                     segmentedPicker(
                         options: MonitorRAMAlertThreshold.allCases,
                         selection: preferences.monitorRAMAlertThreshold,
@@ -477,7 +478,7 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow("温度告警阈值") {
+                formRow(L10n.tr("温度告警阈值", "Temp Alert Threshold")) {
                     segmentedPicker(
                         options: MonitorThermalAlertThreshold.allCases,
                         selection: preferences.monitorThermalAlertThreshold,
@@ -494,7 +495,7 @@ struct ControlCenterView: View {
 
     private var aboutProductView: some View {
         let isDark = colorScheme == .dark
-        return VStack(alignment: .leading, spacing: 20) {
+        return VStack(alignment: .leading, spacing: 18) {
             // Brand Hero Card
             HStack(spacing: 14) {
                 Image(nsImage: BrandAssets.appIcon)
@@ -515,12 +516,12 @@ struct ControlCenterView: View {
                             .padding(.vertical, 2)
                             .background(MonitorPalette.cyan.opacity(0.14), in: .capsule)
                     }
-                    Text("macOS 原生实时逐字歌词与系统硬件遥测工具")
+                    Text(L10n.tr("macOS 原生实时逐字歌词与硬件遥测", "Native Lyrics & Hardware Telemetry"))
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 4) {
                     Text("GitHub")
@@ -528,6 +529,7 @@ struct ControlCenterView: View {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .semibold))
                 }
+                .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 11)
                 .frame(height: 26)
@@ -553,37 +555,49 @@ struct ControlCenterView: View {
                     }
             }
 
-            formGroup(title: "交互指南") {
+            formGroup(title: L10n.tr("通用设置", "General")) {
+                formRow(L10n.tr("界面语言", "Language")) {
+                    segmentedPicker(
+                        options: AppLanguage.allCases,
+                        selection: preferences.language,
+                        label: { $0.displayName }
+                    ) {
+                        preferences.language = $0
+                    }
+                }
+            }
+
+            formGroup(title: L10n.tr("交互指南", "Interaction Guide")) {
                 guideRow(
                     icon: "text.quote",
-                    title: "桌面悬浮歌词",
-                    detail: "默认鼠标穿透；按住 ⌘ 移入唤醒控制栏，支持 ±0.5s 偏移与双击切歌"
+                    title: L10n.tr("桌面悬浮歌词", "Desktop Floating Lyrics"),
+                    detail: L10n.tr("默认鼠标穿透；按住 ⌘ 移入唤醒，支持 ±0.5s 偏移与双击切歌", "Click-through; hold ⌘ to wake, ±0.5s offset & double-click skip")
                 )
                 rowDivider
                 guideRow(
                     icon: "rectangle.on.rectangle.angled",
-                    title: "桌面组件与演示舞台",
-                    detail: "随专辑封面实时提取流光色盘，支持自由拖动与双击切下一首"
+                    title: L10n.tr("桌面组件与演示舞台", "Desktop Widget & Stage Window"),
+                    detail: L10n.tr("随专辑封面实时提取流光色盘，支持自由拖动与双击切下一首", "Live album-art aurora palette; drag freely or double-click to skip")
                 )
                 rowDivider
                 guideRow(
                     icon: "menubar.rectangle",
-                    title: "状态栏歌词与硬件监控",
-                    detail: "左键点击监控项展开 CPU / 内存 / 温度面板，右键呼出快捷菜单"
+                    title: L10n.tr("状态栏歌词与硬件监控", "Status Bar Lyrics & Telemetry"),
+                    detail: L10n.tr("左键点击监控项展开 CPU / 内存 / 温度面板，右键呼出快捷菜单", "Left-click for CPU / RAM / TMP popover; right-click for menu")
                 )
             }
 
-            formGroup(title: "架构与隐私承诺") {
+            formGroup(title: L10n.tr("架构与隐私承诺", "Architecture & Privacy")) {
                 guideRow(
                     icon: "lock.shield",
-                    title: "纯本地只读 · 最小权限",
-                    detail: "网易云音乐零系统授权，Apple Music 仅需自动化授权，不写任何播放器数据"
+                    title: L10n.tr("纯本地只读 · 最小权限", "Read-Only Local Access · Minimal Permissions"),
+                    detail: L10n.tr("网易云零系统授权，Apple Music 仅需自动化权限，只读不写", "Zero permissions for NetEase; Automation-only for Apple Music")
                 )
                 rowDivider
                 guideRow(
                     icon: "bolt.horizontal.circle",
-                    title: "原生低功耗架构",
-                    detail: "Swift 6.2 + AppKit + Core Animation 硬件加速，零第三方依赖"
+                    title: L10n.tr("原生低功耗架构", "Native Low-Power Engine"),
+                    detail: L10n.tr("Swift 6.2 + AppKit + Core Animation 硬件加速，零第三方依赖", "Swift 6.2 + AppKit + Core Animation, zero dependencies")
                 )
             }
         }
@@ -605,8 +619,7 @@ struct ControlCenterView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
@@ -661,11 +674,12 @@ struct ControlCenterView: View {
         _ title: String,
         @ViewBuilder control: () -> Control
     ) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Text(title)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(.primary)
-            Spacer(minLength: 16)
+                .lineLimit(1)
+            Spacer(minLength: 8)
             control()
                 .fixedSize(horizontal: true, vertical: false)
         }
@@ -674,11 +688,12 @@ struct ControlCenterView: View {
     }
 
     private func formToggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Text(title)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(.primary)
-            Spacer(minLength: 16)
+                .lineLimit(1)
+            Spacer(minLength: 8)
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
