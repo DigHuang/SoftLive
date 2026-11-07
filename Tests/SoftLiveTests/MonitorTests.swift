@@ -59,6 +59,14 @@ import Testing
 
         let compactImage = MonitorStatusBar.renderImage(for: metrics, style: .barsOnly)
         #expect(compactImage.size == NSSize(width: 20, height: 22))
+        #expect(!compactImage.isTemplate)
+
+        let monoImage = MonitorStatusBar.renderImage(for: metrics, coloredBars: false)
+        #expect(monoImage.isTemplate)
+        #expect(
+            MonitorStatusBar.DisplayKey(metrics: metrics, coloredBars: true)
+                != MonitorStatusBar.DisplayKey(metrics: metrics, coloredBars: false)
+        )
 
         // Crossing color thresholds within the same integer bar-height step must produce distinct DisplayKeys.
         let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.795))

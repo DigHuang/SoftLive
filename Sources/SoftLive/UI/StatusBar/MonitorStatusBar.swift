@@ -255,6 +255,7 @@ final class MonitorStatusBar: NSObject {
 
     struct DisplayKey: Equatable {
         let style: MonitorStatusBarStyle
+        let coloredBars: Bool
         let upText: String
         let downText: String
         let cpuBarSteps: Int
@@ -268,21 +269,23 @@ final class MonitorStatusBar: NSObject {
         init(
             metrics: SystemMetrics,
             style: MonitorStatusBarStyle = .rateAndBars,
+            coloredBars: Bool = true,
             cpuThreshold: Double = MonitorCPUAlertThreshold.standard.fraction,
             ramThreshold: Double = MonitorRAMAlertThreshold.standard.fraction,
             thermalThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
         ) {
             self.style = style
+            self.coloredBars = coloredBars
             upText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec) : ""
             downText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec) : ""
             cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
             ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
             tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
-            cpuHigh = metrics.cpuUsage >= cpuThreshold
-            ramWarning = metrics.memoryUsage >= ramThreshold
+            cpuHigh = coloredBars && metrics.cpuUsage >= cpuThreshold
+            ramWarning = coloredBars && metrics.memoryUsage >= ramThreshold
             let temp = metrics.temperatureCelsius ?? 0
-            tmpBand = temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)
-            pressure = metrics.memoryPressure
+            tmpBand = coloredBars ? (temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)) : 0
+            pressure = coloredBars ? metrics.memoryPressure : .normal
         }
     }
 
@@ -306,6 +309,7 @@ final class MonitorStatusBar: NSObject {
         let initialKey = DisplayKey(
             metrics: monitor.metrics,
             style: preferences.monitorStatusBarStyle,
+            coloredBars: preferences.monitorColoredBars,
             cpuThreshold: preferences.monitorCPUAlertThreshold.fraction,
             ramThreshold: preferences.monitorRAMAlertThreshold.fraction,
             thermalThreshold: preferences.monitorThermalAlertThreshold.celsius
@@ -333,11 +337,12 @@ final class MonitorStatusBar: NSObject {
         self.panel = popoverPanel
 
         observeTask = Task { [weak self] in
-            for await (metrics, visible, style, cpuAlert, ramAlert, thermalAlert) in Observations({
+            for await (metrics, visible, style, coloredBars, cpuAlert, ramAlert, thermalAlert) in Observations({
                 (
                     monitor.metrics,
                     preferences.showsSystemMonitor,
                     preferences.monitorStatusBarStyle,
+                    preferences.monitorColoredBars,
                     preferences.monitorCPUAlertThreshold.fraction,
                     preferences.monitorRAMAlertThreshold.fraction,
                     preferences.monitorThermalAlertThreshold.celsius
@@ -354,6 +359,7 @@ final class MonitorStatusBar: NSObject {
                 let key = DisplayKey(
                     metrics: metrics,
                     style: style,
+                    coloredBars: coloredBars,
                     cpuThreshold: cpuAlert,
                     ramThreshold: ramAlert,
                     thermalThreshold: thermalAlert
@@ -404,9 +410,10 @@ final class MonitorStatusBar: NSObject {
 
     static func renderImage(
         for metrics: SystemMetrics,
-        style: MonitorStatusBarStyle = .rateAndBars
+        style: MonitorStatusBarStyle = .rateAndBars,
+        coloredBars: Bool = true
     ) -> NSImage {
-        renderImage(for: metrics, key: DisplayKey(metrics: metrics, style: style))
+        renderImage(for: metrics, key: DisplayKey(metrics: metrics, style: style, coloredBars: coloredBars))
     }
 
     private static func renderImage(for metrics: SystemMetrics, key: DisplayKey) -> NSImage {
@@ -429,16 +436,25 @@ final class MonitorStatusBar: NSObject {
                 )
             }
 
-            let cpuColor = key.cpuHigh ? cpuOrange : cpuCyan
-            let ramColor: NSColor = switch metrics.memoryPressure {
-            case .critical: ramCoral
-            case .warning: ramAmber
-            case .normal: key.ramWarning ? ramAmber : ramEmerald
+            let monoColor = NSColor.labelColor.withAlphaComponent(0.88)
+            let cpuColor = key.coloredBars ? (key.cpuHigh ? cpuOrange : cpuCyan) : monoColor
+            let ramColor: NSColor = if key.coloredBars {
+                switch metrics.memoryPressure {
+                case .critical: ramCoral
+                case .warning: ramAmber
+                case .normal: key.ramWarning ? ramAmber : ramEmerald
+                }
+            } else {
+                monoColor
             }
-            let tmpColor: NSColor = switch key.tmpBand {
-            case 2: ramCoral
-            case 1: ramAmber
-            default: tmpTeal
+            let tmpColor: NSColor = if key.coloredBars {
+                switch key.tmpBand {
+                case 2: ramCoral
+                case 1: ramAmber
+                default: tmpTeal
+                }
+            } else {
+                monoColor
             }
 
             drawVerticalBars(
@@ -455,7 +471,7 @@ final class MonitorStatusBar: NSObject {
             )
             return true
         }
-        image.isTemplate = false
+        image.isTemplate = !key.coloredBars
         return image
     }
 
