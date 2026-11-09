@@ -5,9 +5,10 @@ import SwiftUI
 enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
     case player
     case monitor
+    case cleaner
     case about
 
-    static let navigationTabs: [ControlCenterSection] = [.player, .monitor]
+    static let navigationTabs: [ControlCenterSection] = [.player, .monitor, .cleaner]
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .player: L10n.tr("播放器", "Player")
         case .monitor: L10n.tr("监听", "Monitor")
+        case .cleaner: L10n.tr("清理", "Cleaner")
         case .about: L10n.tr("产品说明", "About")
         }
     }
@@ -23,6 +25,7 @@ enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .player: "music.note"
         case .monitor: "gauge.with.dots.needle.67percent"
+        case .cleaner: "sparkles"
         case .about: "info.circle"
         }
     }
@@ -31,6 +34,7 @@ enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .player: MonitorPalette.cyan
         case .monitor: MonitorPalette.indigo
+        case .cleaner: MonitorPalette.emerald
         case .about: MonitorPalette.teal
         }
     }
@@ -39,25 +43,48 @@ enum ControlCenterSection: String, CaseIterable, Identifiable, Sendable {
 @Observable
 final class ControlCenterState {
     var isOpen = false
-    var selectedSection: ControlCenterSection = .player
+    var selectedSection: ControlCenterSection = {
+        if let raw = ProcessInfo.processInfo.environment["SOFTLIVE_INITIAL_SECTION"],
+           let initial = ControlCenterSection(rawValue: raw) {
+            return initial
+        }
+        return .player
+    }()
+    var windowSize: NSSize = ControlCenterWindow.defaultSize
 }
 
-/// Unified macOS desktop configuration center with a clean left-right split layout (`播放器` / `监听` + bottom brand entry for `产品说明`).
-/// Unloads its SwiftUI subtree when closed so background CPU overhead remains strictly zero.
+/// Unified macOS desktop configuration center with a clean left-right split layout (`播放器` / `监听` / `清理` + bottom brand entry for `产品说明`).
+/// Supports user window resizing with an enforced minimum size constraint (`740 × 640 pt`) and unloads its SwiftUI subtree when closed.
 final class ControlCenterWindow: NSWindow, NSWindowDelegate {
-    static let windowSize = NSSize(width: 640, height: 636)
+    static let defaultSize = NSSize(width: 780, height: 680)
+    static let minWindowSize = NSSize(width: 740, height: 640)
+    static var windowSize: NSSize { defaultSize }
     private static let frameAutosave = "SoftLiveControlCenterWindow"
 
     let state = ControlCenterState()
+    let cleaner: DiskCleaner
+
+    override var minSize: NSSize {
+        get { Self.minWindowSize }
+        set { super.minSize = Self.minWindowSize }
+    }
+
+    override var contentMinSize: NSSize {
+        get { Self.minWindowSize }
+        set { super.contentMinSize = Self.minWindowSize }
+    }
 
     init(
         model: PlaybackModel,
         monitor: SystemMonitor,
+        cleaner: DiskCleaner? = nil,
         preferences: Preferences
     ) {
+        let resolvedCleaner = cleaner ?? DiskCleaner(preferences: preferences)
+        self.cleaner = resolvedCleaner
         super.init(
-            contentRect: NSRect(origin: .zero, size: Self.windowSize),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
@@ -67,53 +94,93 @@ final class ControlCenterWindow: NSWindow, NSWindowDelegate {
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
         collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
-        standardWindowButton(.zoomButton)?.isEnabled = false
+        standardWindowButton(.zoomButton)?.isEnabled = true
         delegate = self
 
         let rootView = ControlCenterView(
             model: model,
             monitor: monitor,
+            cleaner: resolvedCleaner,
             preferences: preferences,
             state: state
         )
         let host = NSHostingView(rootView: rootView)
         host.sizingOptions = []
-        host.frame = NSRect(origin: .zero, size: Self.windowSize)
+        host.autoresizingMask = [.width, .height]
+        host.frame = NSRect(origin: .zero, size: Self.defaultSize)
         contentView = host
 
-        if setFrameUsingName(Self.frameAutosave) {
-            if abs(frame.width - Self.windowSize.width) > 0.5 || abs(frame.height - Self.windowSize.height) > 0.5 {
+        // Set `minSize` and `contentMinSize` AFTER assigning `contentView = host` so AppKit does not reset them.
+        minSize = Self.minWindowSize
+        contentMinSize = Self.minWindowSize
+
+        let restored = setFrameUsingName(Self.frameAutosave)
+        setFrameAutosaveName(Self.frameAutosave)
+        if restored {
+            let targetWidth = max(frame.width, Self.minWindowSize.width)
+            let targetHeight = max(frame.height, Self.minWindowSize.height)
+            if abs(frame.width - targetWidth) > 0.5 || abs(frame.height - targetHeight) > 0.5 {
                 setFrame(
                     NSRect(
                         x: frame.minX,
-                        y: frame.maxY - Self.windowSize.height,
-                        width: Self.windowSize.width,
-                        height: Self.windowSize.height
+                        y: frame.maxY - targetHeight,
+                        width: targetWidth,
+                        height: targetHeight
                     ),
                     display: false
                 )
             }
         } else if let screen = NSScreen.main?.visibleFrame {
             let origin = NSPoint(
-                x: round(screen.midX - Self.windowSize.width / 2),
-                y: round(screen.midY - Self.windowSize.height / 2)
+                x: round(screen.midX - Self.defaultSize.width / 2),
+                y: round(screen.midY - Self.defaultSize.height / 2)
             )
             setFrameOrigin(origin)
         }
-        setFrameAutosaveName(Self.frameAutosave)
+        state.windowSize = frame.size
     }
 
     func show(section: ControlCenterSection? = nil) {
         if let section {
             state.selectedSection = section
         }
+        minSize = Self.minWindowSize
+        contentMinSize = Self.minWindowSize
+        let targetWidth = max(frame.width, Self.minWindowSize.width)
+        let targetHeight = max(frame.height, Self.minWindowSize.height)
+        if abs(frame.width - targetWidth) > 0.5 || abs(frame.height - targetHeight) > 0.5 {
+            setFrame(
+                NSRect(
+                    x: frame.minX,
+                    y: frame.maxY - targetHeight,
+                    width: targetWidth,
+                    height: targetHeight
+                ),
+                display: false
+            )
+        }
+        state.windowSize = frame.size
         state.isOpen = true
         contentView?.isHidden = false
+        contentView?.frame = NSRect(origin: .zero, size: frame.size)
         NSApp.activate()
         makeKeyAndOrderFront(nil)
     }
 
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(frameSize.width, Self.minWindowSize.width),
+            height: max(frameSize.height, Self.minWindowSize.height)
+        )
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        state.windowSize = frame.size
+        contentView?.frame = NSRect(origin: .zero, size: frame.size)
+    }
+
     func windowWillClose(_ notification: Notification) {
+        cleaner.cancelInFlightScan()
         state.isOpen = false
         contentView?.isHidden = true
     }
@@ -125,8 +192,23 @@ struct ControlCenterView: View {
 
     let model: PlaybackModel
     let monitor: SystemMonitor
+    let cleaner: DiskCleaner
     let preferences: Preferences
     let state: ControlCenterState
+
+    init(
+        model: PlaybackModel,
+        monitor: SystemMonitor,
+        cleaner: DiskCleaner? = nil,
+        preferences: Preferences,
+        state: ControlCenterState
+    ) {
+        self.model = model
+        self.monitor = monitor
+        self.cleaner = cleaner ?? DiskCleaner(preferences: preferences)
+        self.preferences = preferences
+        self.state = state
+    }
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -139,26 +221,23 @@ struct ControlCenterView: View {
         if !state.isOpen {
             Color.clear.frame(width: 0, height: 0)
         } else {
+            let winWidth = max(state.windowSize.width, ControlCenterWindow.minWindowSize.width)
+            let winHeight = max(state.windowSize.height, ControlCenterWindow.minWindowSize.height)
+            let rightWidth = max(winWidth - Self.sidebarWidth - 0.5, 400)
+
             HStack(alignment: .top, spacing: 0) {
                 sidebar
-                    .frame(width: Self.sidebarWidth, height: ControlCenterWindow.windowSize.height, alignment: .topLeading)
+                    .frame(width: Self.sidebarWidth, height: winHeight, alignment: .topLeading)
 
                 Rectangle()
                     .fill(dividerColor)
-                    .frame(width: 0.5, height: ControlCenterWindow.windowSize.height)
+                    .frame(width: 0.5, height: winHeight)
 
                 detailPane
-                    .frame(
-                        width: ControlCenterWindow.windowSize.width - Self.sidebarWidth - 0.5,
-                        height: ControlCenterWindow.windowSize.height,
-                        alignment: .topLeading
-                    )
+                    .frame(width: rightWidth, height: winHeight, alignment: .topLeading)
+                    .clipped()
             }
-            .frame(
-                width: ControlCenterWindow.windowSize.width,
-                height: ControlCenterWindow.windowSize.height,
-                alignment: .topLeading
-            )
+            .frame(width: winWidth, height: winHeight, alignment: .topLeading)
             .background(windowBackground)
             .ignoresSafeArea()
         }
@@ -282,12 +361,15 @@ struct ControlCenterView: View {
                 playerSettings
             case .monitor:
                 monitorSettings
+            case .cleaner:
+                CleanerPaneView(cleaner: cleaner, preferences: preferences)
             case .about:
                 aboutProductView
             }
         }
         .padding(.horizontal, 28)
         .padding(.top, 28)
+        .padding(.bottom, 22)
     }
 
     // MARK: - Tab 1: 播放器
@@ -516,7 +598,7 @@ struct ControlCenterView: View {
                                 .padding(.vertical, 2)
                                 .background(MonitorPalette.cyan.opacity(0.14), in: .capsule)
                         }
-                        Text(L10n.tr("macOS 原生实时逐字歌词与硬件遥测", "Native Lyrics & Hardware Telemetry"))
+                        Text(L10n.tr("macOS 原生实时逐字歌词、硬件遥测与空间清理", "Native Lyrics, Hardware Telemetry & Space Cleaner"))
                             .font(.system(size: 12, weight: .regular))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

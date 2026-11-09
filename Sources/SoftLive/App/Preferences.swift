@@ -163,6 +163,7 @@ final class Preferences {
     var monitorCPUAlertThreshold: MonitorCPUAlertThreshold { didSet { defaults.set(monitorCPUAlertThreshold.rawValue, forKey: Key.monitorCPUAlert) } }
     var monitorRAMAlertThreshold: MonitorRAMAlertThreshold { didSet { defaults.set(monitorRAMAlertThreshold.rawValue, forKey: Key.monitorRAMAlert) } }
     var monitorThermalAlertThreshold: MonitorThermalAlertThreshold { didSet { defaults.set(monitorThermalAlertThreshold.rawValue, forKey: Key.monitorThermalAlert) } }
+    var cleanStaleThreshold: CleanStaleThreshold { didSet { defaults.set(cleanStaleThreshold.rawValue, forKey: Key.cleanStaleDays) } }
     var language: AppLanguage {
         didSet {
             defaults.set(language.rawValue, forKey: Key.language)
@@ -190,6 +191,7 @@ final class Preferences {
         static let monitorCPUAlert = "monitorCPUAlertThreshold"
         static let monitorRAMAlert = "monitorRAMAlertThreshold"
         static let monitorThermalAlert = "monitorThermalAlertThreshold"
+        static let cleanStaleDays = "cleanStaleDaysThreshold"
         static let language = "appLanguage"
     }
 
@@ -217,6 +219,7 @@ final class Preferences {
             Key.monitorCPUAlert: MonitorCPUAlertThreshold.standard.rawValue,
             Key.monitorRAMAlert: MonitorRAMAlertThreshold.standard.rawValue,
             Key.monitorThermalAlert: MonitorThermalAlertThreshold.standard.rawValue,
+            Key.cleanStaleDays: CleanStaleThreshold.sevenDays.rawValue,
             Key.language: AppLanguage.system.rawValue,
         ])
         showsStatusBarLyrics = defaults.bool(forKey: Key.statusBar)
@@ -239,6 +242,7 @@ final class Preferences {
         monitorCPUAlertThreshold = MonitorCPUAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorCPUAlert)) ?? .standard
         monitorRAMAlertThreshold = MonitorRAMAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorRAMAlert)) ?? .standard
         monitorThermalAlertThreshold = MonitorThermalAlertThreshold(rawValue: defaults.integer(forKey: Key.monitorThermalAlert)) ?? .standard
+        cleanStaleThreshold = CleanStaleThreshold(rawValue: defaults.integer(forKey: Key.cleanStaleDays)) ?? .sevenDays
         let resolvedLanguage = defaults.string(forKey: Key.language).flatMap(AppLanguage.init(rawValue:)) ?? .system
         language = resolvedLanguage
         L10n.language = resolvedLanguage

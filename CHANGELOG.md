@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog 2.0.0](https://keepachangelog.com/en/2.
 
 ## [Unreleased]
 
+### Added
+
+- **Lightweight Allowlist Disk Cleaner & App Uninstaller (`Cleaner` Subsystem)**: Added a standalone `Cleaner` subsystem (`CleanModels`, `CleanRuleEngine`, `AppUninstallEngine`, `DiskCleaner`) and a dual-mode `Cleaner` workspace (`CleanerPaneView`) in Control Center, and upgraded `ControlCenterWindow` to a larger, user-resizable window (`780 × 680 pt` default, `740 × 640 pt` minimum) with `⌘1–⌘4` section shortcuts:
+  - **Junk & Caches Mode**: Scans 4 allowlisted categories in parallel via POSIX `fts_open(FTS_PHYSICAL)` with hard-link inode deduplication (App Caches & Logs, Dev Tools & Packages, Stale Project Builds with monorepo-aware `.git` activity checks, and Orphaned App Leftovers & Installers) without requiring Full Disk Access or a privileged helper.
+  - **App Uninstaller & Reset Mode**: Discovers installed applications in `/Applications` and `~/Applications` (and accepts `.app` bundles dropped from Finder), correlates 8 categories of associated `~/Library` files (`Application Support`, `Caches`, `Containers`, `Preferences`, `Saved State`, `HTTPStorages`, `Logs`, `Group Containers` & `LaunchAgents`), and supports both **Full Uninstall** and **Reset Data Only** (keeping the `.app` bundle while moving its data to the macOS Trash).
+
 ## [0.0.2] - 2026-11-08
 
 ### Added

@@ -297,6 +297,7 @@ struct KaraokeLayerViewTests {
                 firstCardTopRows[section] = firstCardRow
             }
             #expect(firstCardTopRows[.player] == firstCardTopRows[.monitor])
+            #expect(firstCardTopRows[.player] == firstCardTopRows[.cleaner])
             #expect(firstCardTopRows[.player] == firstCardTopRows[.about])
         }
     }

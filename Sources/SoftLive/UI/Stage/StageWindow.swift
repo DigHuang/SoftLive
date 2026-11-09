@@ -14,6 +14,16 @@ final class StageWindow: NSPanel {
     private var savedWindowedFrame: NSRect?
     private(set) var isZoomedToScreen = false
 
+    override var minSize: NSSize {
+        get { Self.minWindowSize }
+        set { super.minSize = Self.minWindowSize }
+    }
+
+    override var contentMinSize: NSSize {
+        get { Self.minWindowSize }
+        set { super.contentMinSize = Self.minWindowSize }
+    }
+
     init(model: PlaybackModel, preferences: Preferences, menu: NSMenu) {
         let state = StageWindowState()
         super.init(
