@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = PlaybackModel()
     private let preferences = Preferences()
     private lazy var monitor = SystemMonitor(preferences: preferences)
+    private lazy var cleaner = DiskCleaner(preferences: preferences)
     private lazy var appMenu = AppMenu(model: model, preferences: preferences) { [weak self] section in
         self?.controlCenterWindow?.show(section: section)
     }
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controlCenterWindow = ControlCenterWindow(
             model: model,
             monitor: monitor,
+            cleaner: cleaner,
             preferences: preferences
         )
         model.start()

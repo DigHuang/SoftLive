@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog 2.0.0](https://keepachangelog.com/en/2.
 
 ## [Unreleased]
 
+### Added
+
+- **Lightweight Allowlist Disk Cleaner (`Cleaner` Subsystem) & Resizable Control Center**: Added a standalone `Cleaner` subsystem (`CleanModels`, `CleanRuleEngine`, `DiskCleaner`) and a dedicated `Cleaner` workspace tab (`CleanerPaneView`) in Control Center, and upgraded `ControlCenterWindow` to a larger, user-resizable window (`780 × 680 pt` default, `680 × 636 pt` minimum) with `⌘1–⌘4` section shortcuts. Scans 4 allowlisted categories in parallel via POSIX `fts_open(FTS_PHYSICAL)` with hard-link inode deduplication (App Caches & Logs, Dev Tools & Packages, Stale Project Builds with monorepo-aware `.git` activity checks, and Orphaned App Leftovers & Installers) without requiring Full Disk Access or a privileged helper; supports live search, sorting (`By Size / Oldest / By Name`), category Bento filtering, context menus, and two-step confirmation before moving items to the macOS Trash.
+
 ## [0.0.2] - 2026-11-08
 
 ### Added

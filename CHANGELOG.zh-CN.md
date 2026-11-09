@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **轻量白名单空间清理子系统（`Cleaner`）与可缩放配置中心**：新增与 `Playback`、`Lyrics`、`Monitor` 平级的独立 `Cleaner` 子系统（`CleanModels`、`CleanRuleEngine`、`DiskCleaner`）及配置中心「清理」工作台页面（`CleanerPaneView`），并将配置中心升级为支持用户自由拖拽缩放的窗口（默认 `780 × 680 pt`，最小 `680 × 636 pt`，支持 `⌘1–⌘4` 切换分页）。无需完全磁盘访问权限或特权守护进程，基于 POSIX `fts_open(FTS_PHYSICAL)` 与硬链接 inode 去重并发扫描四大白名单分类（应用缓存与日志、开发工具与包缓存、支持 monorepo `.git` 活跃感知的闲置项目构建产物、已卸载应用残留与安装包），提供四列 Bento 分类筛选、关键字搜索、多维排序（按体积/时间/名称）、右键快捷菜单及二次确认后统一移入系统废纸篓。
+
 ## [0.0.2] - 2026-11-08
 
 ### Added

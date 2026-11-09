@@ -18,7 +18,8 @@ SoftLive 是原生 macOS 歌词与系统监控应用，提供状态栏、桌面�
 | `Sources/SoftLive/Playback/` | 播放器接入与 `PlaybackModel` 编排；新增播放器放在 `<Name>/` |
 | `Sources/SoftLive/Lyrics/` | 歌词模型、来源、匹配、解析与缓存 |
 | `Sources/SoftLive/Monitor/` | 监控模型与采样编排；独立系统接口采样器放在 `Samplers/` |
-| `Sources/SoftLive/UI/` | 按 `StatusBar/`、`Overlay/`、`Karaoke/`、`Stage/` 组织界面与渲染 |
+| `Sources/SoftLive/Cleaner/` | 按需空间扫描、纯白名单规则校验与移入废纸篓编排 |
+| `Sources/SoftLive/UI/` | 按 `StatusBar/`、`Overlay/`、`Karaoke/`、`Stage/`、`ControlCenter/`、`Cleaner/` 组织界面与渲染 |
 | `Sources/SoftLive/Support/` | 跨子系统复用的基础设施；模块专用 helper 留在所属模块 |
 | `Tests/SoftLiveTests/` | 按被测职责组织 Swift Testing 测试 |
 | `Resources/`、`Scripts/` | App 打包资源与开发脚本 |

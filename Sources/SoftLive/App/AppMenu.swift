@@ -29,6 +29,7 @@ final class AppMenu: NSObject, NSMenuDelegate {
     /// Builds the application `mainMenu` so standard shortcuts (`⌘Q`, `⌘W`, `⌘M`, `⌘,`, `⌘H`)
     /// work when `ControlCenterWindow` or `StageWindow` is the key window.
     func makeMainMenu() -> NSMenu {
+        _ = NSApplication.shared
         let mainMenu = NSMenu()
 
         let appRootItem = NSMenuItem()
@@ -69,6 +70,23 @@ final class AppMenu: NSObject, NSMenuDelegate {
             action: #selector(NSWindow.performMiniaturize(_:)),
             keyEquivalent: "m"
         )
+        windowSubmenu.addItem(.separator())
+        let tabSpecs: [(ControlCenterSection, String)] = [
+            (.player, "1"),
+            (.monitor, "2"),
+            (.cleaner, "3"),
+            (.about, "4")
+        ]
+        for (index, spec) in tabSpecs.enumerated() {
+            let tabItem = NSMenuItem(
+                title: spec.0.title,
+                action: #selector(openSectionFromShortcut(_:)),
+                keyEquivalent: spec.1
+            )
+            tabItem.tag = index
+            tabItem.target = self
+            windowSubmenu.addItem(tabItem)
+        }
         windowRootItem.submenu = windowSubmenu
 
         return mainMenu
@@ -160,6 +178,12 @@ final class AppMenu: NSObject, NSMenuDelegate {
 
     @objc private func openControlCenterFromShortcut(_ sender: Any?) {
         onOpenControlCenter?(nil)
+    }
+
+    @objc private func openSectionFromShortcut(_ sender: NSMenuItem) {
+        let all: [ControlCenterSection] = [.player, .monitor, .cleaner, .about]
+        guard all.indices.contains(sender.tag) else { return }
+        onOpenControlCenter?(all[sender.tag])
     }
 
     @objc private func quitFromShortcut(_ sender: Any?) {
