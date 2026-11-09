@@ -343,6 +343,153 @@ import Testing
         #expect(clamped == ControlCenterWindow.minWindowSize)
     }
 
+    @Test func discoversInstalledAppsMatchesLibraryResidualsSupportsAppResetAndFullUninstall() throws {
+        let fm = FileManager.default
+        let tempRoot = fm.temporaryDirectory
+            .appending(path: "SoftLiveAppUninstall-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let tempHome = tempRoot.appending(path: "Home", directoryHint: .isDirectory)
+        let tempApps = tempRoot.appending(path: "Applications", directoryHint: .isDirectory)
+        let externalDir = tempRoot.appending(path: "External", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        try fm.createDirectory(at: tempApps, withIntermediateDirectories: true)
+        try fm.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: tempRoot)
+            L10n.language = .system
+        }
+
+        // 1. Create a mock installed app (`AcmeStudio.app`, bundleID `com.acme.studio`)
+        let acmeApp = try createMockAppBundle(
+            in: tempApps,
+            bundleName: "AcmeStudio.app",
+            bundleID: "com.acme.studio",
+            displayName: "Acme Studio",
+            version: "2.4.0",
+            binaryBytes: 512 * 1024
+        )
+        // System app (`com.apple.Safari`) must be ignored
+        _ = try createMockAppBundle(
+            in: tempApps,
+            bundleName: "Safari.app",
+            bundleID: "com.apple.Safari",
+            displayName: "Safari",
+            version: "26.0",
+            binaryBytes: 256 * 1024
+        )
+
+        // 2. Create associated ~/Library residuals for `com.acme.studio`
+        let appSupportDir = tempHome.appending(path: "Library/Application Support/Acme Studio", directoryHint: .isDirectory)
+        try writeSizedFile(in: appSupportDir, name: "workspace.db", bytes: 256 * 1024, mtime: .now)
+
+        let cacheDir = tempHome.appending(path: "Library/Caches/com.acme.studio", directoryHint: .isDirectory)
+        try writeSizedFile(in: cacheDir, name: "shader.cache", bytes: 128 * 1024, mtime: .now)
+
+        let prefsDir = tempHome.appending(path: "Library/Preferences", directoryHint: .isDirectory)
+        try writeSizedFile(in: prefsDir, name: "com.acme.studio.plist", bytes: 16 * 1024, mtime: .now)
+
+        let savedStateDir = tempHome.appending(path: "Library/Saved Application State/com.acme.studio.savedState", directoryHint: .isDirectory)
+        try writeSizedFile(in: savedStateDir, name: "windows.data", bytes: 32 * 1024, mtime: .now)
+
+        let groupContainerDir = tempHome.appending(path: "Library/Group Containers/group.com.acme.studio.shared", directoryHint: .isDirectory)
+        try writeSizedFile(in: groupContainerDir, name: "shared.sqlite", bytes: 64 * 1024, mtime: .now)
+
+        let suiteName = "SoftLiveAppUninstallSuite.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let preferences = Preferences(defaults: defaults)
+        let cleaner = DiskCleaner(preferences: preferences)
+
+        cleaner.performSynchronousAppScan(
+            homeDirectory: tempHome,
+            applicationDirectories: [tempApps]
+        )
+
+        #expect(cleaner.installedApps.count == 1)
+        let target = try #require(cleaner.selectedApp)
+        #expect(target.displayName == "Acme Studio")
+        #expect(target.bundleID == "com.acme.studio")
+        #expect(target.version == "2.4.0")
+        // 1 (.app bundle) + 5 (Application Support, Caches, Preferences, Saved State, Group Container) = 6 items
+        #expect(target.residuals.count == 6)
+        #expect(cleaner.isSelectedAppBundleChecked)
+
+        // Group Container is `.checkFirst`, so 5 `.safe` items are pre-selected by default
+        #expect(cleaner.selectedAppItemCount == 5)
+
+        // Render App Uninstaller workspace in Chinese and English
+        cleaner.mode = .appUninstall
+        let model = PlaybackModel(sources: [])
+        let monitor = SystemMonitor(preferences: preferences)
+        let state = ControlCenterState()
+        state.isOpen = true
+        state.selectedSection = .cleaner
+
+        preferences.language = .zhHans
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.defaultSize
+        )
+        preferences.language = .en
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.minWindowSize
+        )
+
+        // Step A: Test "Reset Data Only" (`selectAppResidualsOnly`) — unchecks `.appBundle`, trashes 4 safe Library items
+        cleaner.selectAppResidualsOnly()
+        #expect(!cleaner.isSelectedAppBundleChecked)
+        #expect(cleaner.selectedAppItemCount == 4)
+
+        let resetReport = cleaner.trashSelectedAppItems(
+            homeDirectory: tempHome,
+            allowedApplicationDirectories: [tempApps]
+        ) { url in
+            try fm.removeItem(at: url)
+        }
+        #expect(resetReport.trashedCount == 4)
+        #expect(fm.fileExists(atPath: acmeApp.path(percentEncoded: false)))
+        // App remains installed, with only `.appBundle` and unchecked `Group Container` left
+        #expect(cleaner.installedApps.count == 1)
+        #expect(cleaner.selectedApp?.residuals.count == 2)
+
+        // Step B: Test "Full Uninstall" — selects `.appBundle` and trashes the app itself
+        cleaner.selectAllSafeAppResiduals()
+        #expect(cleaner.isSelectedAppBundleChecked)
+        let uninstallReport = cleaner.trashSelectedAppItems(
+            homeDirectory: tempHome,
+            allowedApplicationDirectories: [tempApps]
+        ) { url in
+            try fm.removeItem(at: url)
+        }
+        #expect(uninstallReport.trashedCount == 1)
+        #expect(!fm.fileExists(atPath: acmeApp.path(percentEncoded: false)))
+        #expect(cleaner.installedApps.isEmpty)
+
+        // Step C: Test Finder `.app` Drag & Drop (`handleDroppedAppURL`)
+        cleaner.mode = .junkClean
+        let droppedApp = try createMockAppBundle(
+            in: externalDir,
+            bundleName: "DroppedTool.app",
+            bundleID: "io.dropped.tool",
+            displayName: "Dropped Tool",
+            version: "1.2.0",
+            binaryBytes: 192 * 1024
+        )
+        let droppedAccepted = cleaner.handleDroppedAppURL(droppedApp, homeDirectory: tempHome)
+        #expect(droppedAccepted)
+        #expect(cleaner.mode == .appUninstall)
+        #expect(cleaner.selectedApp?.displayName == "Dropped Tool")
+    }
+
     private func assertCleanerPaneRenders(
         model: PlaybackModel,
         monitor: SystemMonitor,
@@ -381,6 +528,33 @@ import Testing
     }
 
     // MARK: - Test Helpers
+
+    private func createMockAppBundle(
+        in directory: URL,
+        bundleName: String,
+        bundleID: String,
+        displayName: String,
+        version: String,
+        binaryBytes: Int
+    ) throws -> URL {
+        let appURL = directory.appending(path: bundleName, directoryHint: .isDirectory)
+        let contentsURL = appURL.appending(path: "Contents", directoryHint: .isDirectory)
+        let macOSURL = contentsURL.appending(path: "MacOS", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+
+        let plist: NSDictionary = [
+            "CFBundleIdentifier": bundleID,
+            "CFBundleDisplayName": displayName,
+            "CFBundleName": displayName,
+            "CFBundleShortVersionString": version
+        ]
+        let plistURL = contentsURL.appending(path: "Info.plist")
+        try plist.write(to: plistURL)
+
+        let execURL = macOSURL.appending(path: displayName)
+        try Data(repeating: 0x7F, count: binaryBytes).write(to: execURL)
+        return appURL
+    }
 
     private func writeSizedFile(in directory: URL, name: String, bytes: Int, mtime: Date) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

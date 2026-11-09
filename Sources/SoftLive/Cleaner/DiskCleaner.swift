@@ -2,10 +2,14 @@ import AppKit
 import Foundation
 import Observation
 
-/// On-demand disk space and cache cleanup coordinator.
+/// On-demand disk space, cache cleanup, and application uninstaller coordinator.
 /// Runs zero background timers or file watchers; scans only when triggered by the user in Control Center.
 @Observable
 final class DiskCleaner {
+    var mode: CleanerMode = .junkClean
+
+    // MARK: - Junk & Cache Clean State
+
     private(set) var diskSpace: DiskSpaceSummary
     private(set) var isScanning = false
     private(set) var isCleaning = false
@@ -14,20 +18,37 @@ final class DiskCleaner {
     private(set) var lastScanDate: Date?
     private(set) var lastReport: CleanSummaryReport?
 
+    // MARK: - App Uninstaller State
+
+    private(set) var isScanningApps = false
+    private(set) var installedApps: [InstalledAppTarget] = []
+    private(set) var selectedAppID: String?
+    private(set) var selectedResidualIDs: Set<String> = []
+    private(set) var lastAppScanDate: Date?
+    private(set) var lastUninstallReport: CleanSummaryReport?
+
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var scanGeneration: UInt64 = 0
+    @ObservationIgnored private var appScanTask: Task<Void, Never>?
+    @ObservationIgnored private var appScanGeneration: UInt64 = 0
+    @ObservationIgnored private var appIconCache: [String: NSImage] = [:]
 
     init(preferences: Preferences) {
         self.preferences = preferences
         self.diskSpace = DiskSpaceSummary.current()
+        if let rawMode = ProcessInfo.processInfo.environment["SOFTLIVE_INITIAL_CLEANER_MODE"],
+           let initialMode = CleanerMode(rawValue: rawMode) {
+            self.mode = initialMode
+        }
     }
 
     isolated deinit {
         scanTask?.cancel()
+        appScanTask?.cancel()
     }
 
-    // MARK: - Derived Metrics
+    // MARK: - Junk & Cache Derived Metrics
 
     var totalScanBytes: UInt64 {
         candidates.reduce(0) { $0 &+ $1.sizeBytes }
@@ -79,7 +100,7 @@ final class DiskCleaner {
         return items.contains { selectedIDs.contains($0.id) }
     }
 
-    // MARK: - Selection Controls
+    // MARK: - Junk Selection Controls
 
     func toggleCategory(_ category: CleanCategory) {
         let items = candidates(for: category)
@@ -90,7 +111,6 @@ final class DiskCleaner {
                 selectedIDs.remove(item.id)
             }
         } else {
-            // Turning a category on selects all safe items first; if the category only has `.checkFirst` items, selects those.
             let safeItems = items.filter { $0.safetyTier == .safe }
             let targets = safeItems.isEmpty ? items : safeItems
             for item in targets {
@@ -119,7 +139,100 @@ final class DiskCleaner {
         selectedIDs.removeAll()
     }
 
-    // MARK: - Scanning & Trashing
+    // MARK: - App Uninstaller Derived Metrics & Controls
+
+    var totalInstalledAppsBytes: UInt64 {
+        installedApps.reduce(0) { $0 &+ $1.totalSizeBytes }
+    }
+
+    var selectedApp: InstalledAppTarget? {
+        guard let selectedAppID else { return installedApps.first }
+        return installedApps.first { $0.id == selectedAppID } ?? installedApps.first
+    }
+
+    var selectedAppBytes: UInt64 {
+        guard let app = selectedApp else { return 0 }
+        return app.residuals.reduce(0) { sum, item in
+            selectedResidualIDs.contains(item.id) ? (sum &+ item.sizeBytes) : sum
+        }
+    }
+
+    var selectedAppItemCount: Int {
+        guard let app = selectedApp else { return 0 }
+        return app.residuals.reduce(0) { count, item in
+            selectedResidualIDs.contains(item.id) ? (count + 1) : count
+        }
+    }
+
+    /// Returns `true` when the `.app` bundle itself is checked (full uninstall),
+    /// or `false` when only `~/Library` residuals are checked (app data reset).
+    var isSelectedAppBundleChecked: Bool {
+        guard let app = selectedApp,
+              let bundleItem = app.residuals.first(where: { $0.kind == .appBundle }) else {
+            return false
+        }
+        return selectedResidualIDs.contains(bundleItem.id)
+    }
+
+    func selectApp(_ id: String) {
+        guard let app = installedApps.first(where: { $0.id == id }) else { return }
+        selectedAppID = app.id
+        selectedResidualIDs = Set(
+            app.residuals
+                .filter { $0.safetyTier.defaultSelected }
+                .map(\.id)
+        )
+        lastUninstallReport = nil
+    }
+
+    func toggleResidual(_ id: String) {
+        if selectedResidualIDs.contains(id) {
+            selectedResidualIDs.remove(id)
+        } else {
+            selectedResidualIDs.insert(id)
+        }
+    }
+
+    func selectAllSafeAppResiduals() {
+        guard let app = selectedApp else { return }
+        selectedResidualIDs = Set(
+            app.residuals
+                .filter { $0.safetyTier.defaultSelected }
+                .map(\.id)
+        )
+    }
+
+    /// Unchecks the `.app` bundle itself and selects only `~/Library` safe residuals ("重置应用数据 / Reset App Data").
+    func selectAppResidualsOnly() {
+        guard let app = selectedApp else { return }
+        selectedResidualIDs = Set(
+            app.residuals
+                .filter { $0.kind != .appBundle && $0.safetyTier.defaultSelected }
+                .map(\.id)
+        )
+    }
+
+    func deselectAllAppResiduals() {
+        selectedResidualIDs.removeAll()
+    }
+
+    func isAppRunning(_ app: InstalledAppTarget) -> Bool {
+        let lowerID = app.bundleID.lowercased()
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier?.lowercased() == lowerID
+        }
+    }
+
+    func icon(for app: InstalledAppTarget) -> NSImage {
+        if let cached = appIconCache[app.id] {
+            return cached
+        }
+        let img = NSWorkspace.shared.icon(forFile: app.bundleURL.path(percentEncoded: false))
+        appIconCache[app.id] = img
+        return img
+    }
+
+    // MARK: - Junk Scanning & Trashing
 
     func refreshDiskSpace() {
         diskSpace = DiskSpaceSummary.current()
@@ -222,13 +335,193 @@ final class DiskCleaner {
         return report
     }
 
+    // MARK: - App Uninstaller Scanning, Drop & Trashing
+
+    func scanApps() {
+        appScanTask?.cancel()
+        appScanTask = nil
+        appScanGeneration &+= 1
+        let currentGen = appScanGeneration
+
+        isScanningApps = true
+        lastUninstallReport = nil
+        refreshDiskSpace()
+
+        appScanTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let apps = AppUninstallEngine.scanInstalledApps()
+            await MainActor.run {
+                guard let self, self.appScanGeneration == currentGen else { return }
+                self.appScanTask = nil
+                self.applyAppScanResults(apps)
+            }
+        }
+    }
+
+    /// Synchronous app scan entry point for deterministic unit tests.
+    func performSynchronousAppScan(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        applicationDirectories: [URL]? = nil
+    ) {
+        appScanTask?.cancel()
+        appScanTask = nil
+        appScanGeneration &+= 1
+        lastUninstallReport = nil
+        let apps = AppUninstallEngine.scanInstalledApps(
+            homeDirectory: homeDirectory,
+            applicationDirectories: applicationDirectories
+        )
+        applyAppScanResults(apps)
+    }
+
+    private func applyAppScanResults(_ apps: [InstalledAppTarget]) {
+        installedApps = apps
+        if let currentID = selectedAppID,
+           let stillPresent = apps.first(where: { $0.id == currentID }) {
+            selectApp(stillPresent.id)
+        } else if let first = apps.first {
+            selectApp(first.id)
+        } else {
+            selectedAppID = nil
+            selectedResidualIDs.removeAll()
+        }
+        lastAppScanDate = .now
+        isScanningApps = false
+    }
+
+    /// Handles a `.app` bundle dropped from Finder onto the Cleaner window:
+    /// switches to `.appUninstall` mode, inspects the `.app` and its `~/Library` files, and selects it.
+    @discardableResult
+    func handleDroppedAppURL(
+        _ url: URL,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        let stdURL = url.standardizedFileURL
+        guard stdURL.pathExtension.lowercased() == "app",
+              let target = AppUninstallEngine.inspectApp(at: stdURL, homeDirectory: homeDirectory) else {
+            return false
+        }
+        mode = .appUninstall
+        if let existingIdx = installedApps.firstIndex(where: { $0.id == target.id }) {
+            installedApps[existingIdx] = target
+        } else {
+            installedApps.insert(target, at: 0)
+        }
+        selectApp(target.id)
+        return true
+    }
+
+    /// Moves the currently selected items of `selectedApp` to the macOS Trash.
+    /// If the `.app` bundle is trashed, removes the app from `installedApps`; if only residuals are trashed,
+    /// updates the app's remaining residuals in place ("App Data Reset").
+    @discardableResult
+    func trashSelectedAppItems(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        allowedApplicationDirectories: [URL]? = nil,
+        trashHandler: ((URL) throws -> Void)? = nil
+    ) -> CleanSummaryReport {
+        guard !isCleaning, let app = selectedApp else {
+            return CleanSummaryReport(trashedCount: 0, freedBytes: 0, skippedCount: 0, completedAt: .now)
+        }
+        isCleaning = true
+        defer { isCleaning = false }
+
+        // If the app is currently running, ask it to terminate gracefully first when trashing via Finder.
+        if trashHandler == nil && isAppRunning(app) {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID)
+            for proc in running {
+                _ = proc.terminate()
+            }
+        }
+
+        // Trash `~/Library` residuals first, and the `.app` bundle last.
+        let chosen = app.residuals
+            .filter { selectedResidualIDs.contains($0.id) }
+            .sorted { lhs, rhs in
+                if lhs.kind == .appBundle { return false }
+                if rhs.kind == .appBundle { return true }
+                return lhs.sizeBytes > rhs.sizeBytes
+            }
+
+        var trashedIDs: Set<String> = []
+        var trashedAppBundle = false
+        var freedBytes: UInt64 = 0
+        var skippedCount = 0
+
+        for item in chosen {
+            guard AppUninstallEngine.canSafelyTrash(
+                item,
+                app: app,
+                homeDirectory: homeDirectory,
+                allowedApplicationDirectories: allowedApplicationDirectories
+            ) else {
+                skippedCount += 1
+                continue
+            }
+            do {
+                if let trashHandler {
+                    try trashHandler(item.url)
+                } else {
+                    try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+                }
+                trashedIDs.insert(item.id)
+                freedBytes &+= item.sizeBytes
+                if item.kind == .appBundle {
+                    trashedAppBundle = true
+                }
+            } catch {
+                skippedCount += 1
+            }
+        }
+
+        if trashedAppBundle {
+            appIconCache.removeValue(forKey: app.id)
+            installedApps.removeAll { $0.id == app.id }
+            if let nextApp = installedApps.first {
+                selectApp(nextApp.id)
+            } else {
+                selectedAppID = nil
+                selectedResidualIDs.removeAll()
+            }
+        } else if !trashedIDs.isEmpty,
+                  let idx = installedApps.firstIndex(where: { $0.id == app.id }) {
+            let remaining = app.residuals.filter { !trashedIDs.contains($0.id) }
+            installedApps[idx] = InstalledAppTarget(
+                bundleURL: app.bundleURL,
+                bundleID: app.bundleID,
+                displayName: app.displayName,
+                version: app.version,
+                bundleSizeBytes: app.bundleSizeBytes,
+                residuals: remaining,
+                lastModified: app.lastModified
+            )
+            selectedResidualIDs.subtract(trashedIDs)
+        }
+
+        refreshDiskSpace()
+        let report = CleanSummaryReport(
+            trashedCount: trashedIDs.count,
+            freedBytes: freedBytes,
+            skippedCount: skippedCount,
+            completedAt: .now
+        )
+        lastUninstallReport = report
+        return report
+    }
+
     /// Cancels any active scan when the Control Center window closes so background work is strictly zero.
     func cancelInFlightScan() {
-        guard isScanning else { return }
-        scanTask?.cancel()
-        scanTask = nil
-        scanGeneration &+= 1
-        isScanning = false
+        if isScanning {
+            scanTask?.cancel()
+            scanTask = nil
+            scanGeneration &+= 1
+            isScanning = false
+        }
+        if isScanningApps {
+            appScanTask?.cancel()
+            appScanTask = nil
+            appScanGeneration &+= 1
+            isScanningApps = false
+        }
     }
 
     func revealInFinder(_ url: URL) {

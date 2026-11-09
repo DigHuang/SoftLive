@@ -1,5 +1,146 @@
 import Foundation
 
+/// Top-level workspace mode inside the Control Center `Cleaner` tab.
+enum CleanerMode: String, CaseIterable, Identifiable, Sendable {
+    case junkClean
+    case appUninstall
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .junkClean:
+            L10n.tr("缓存与残留", "Junk & Caches")
+        case .appUninstall:
+            L10n.tr("应用卸载", "App Uninstaller")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .junkClean: "sparkles"
+        case .appUninstall: "square.stack.3d.up.fill"
+        }
+    }
+}
+
+/// Classification of files associated with an installed application.
+enum AppResidualKind: String, CaseIterable, Sendable, Equatable {
+    case appBundle
+    case appSupport
+    case caches
+    case containers
+    case preferences
+    case stateAndWeb
+    case logs
+    case sharedAndAgents
+
+    var title: String {
+        switch self {
+        case .appBundle: L10n.tr("应用本体", "App Bundle")
+        case .appSupport: L10n.tr("应用支持", "App Support")
+        case .caches: L10n.tr("缓存数据", "Caches")
+        case .containers: L10n.tr("沙盒容器", "Container")
+        case .preferences: L10n.tr("偏好设置", "Preferences")
+        case .stateAndWeb: L10n.tr("状态与网络", "State & Web")
+        case .logs: L10n.tr("诊断日志", "Logs")
+        case .sharedAndAgents: L10n.tr("共享与启动项", "Shared & Agents")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .appBundle: "app.badge.fill"
+        case .appSupport: "folder.fill"
+        case .caches: "internaldrive"
+        case .containers: "cube.box.fill"
+        case .preferences: "slider.horizontal.3"
+        case .stateAndWeb: "window.ceiling"
+        case .logs: "doc.text.fill"
+        case .sharedAndAgents: "link.circle.fill"
+        }
+    }
+}
+
+/// A single file or directory belonging to an installed application (the `.app` bundle itself or a `~/Library` leftover).
+struct AppResidualItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let url: URL
+    let kind: AppResidualKind
+    let title: String
+    let subtitle: String
+    let sizeBytes: UInt64
+    let safetyTier: CleanSafetyTier
+
+    nonisolated init(
+        url: URL,
+        kind: AppResidualKind,
+        title: String,
+        subtitle: String,
+        sizeBytes: UInt64,
+        safetyTier: CleanSafetyTier
+    ) {
+        let std = url.standardizedFileURL
+        let rawPath = std.path(percentEncoded: false)
+        self.id = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        self.url = std
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.sizeBytes = sizeBytes
+        self.safetyTier = safetyTier
+    }
+}
+
+/// An installed macOS application together with all discovered associated files in `~/Library`.
+struct InstalledAppTarget: Identifiable, Equatable, Sendable {
+    let id: String
+    let bundleURL: URL
+    let bundleID: String
+    let displayName: String
+    let version: String
+    let bundleSizeBytes: UInt64
+    let residuals: [AppResidualItem]
+    let lastModified: Date?
+
+    nonisolated init(
+        bundleURL: URL,
+        bundleID: String,
+        displayName: String,
+        version: String,
+        bundleSizeBytes: UInt64,
+        residuals: [AppResidualItem],
+        lastModified: Date? = nil
+    ) {
+        let std = bundleURL.standardizedFileURL
+        let rawPath = std.path(percentEncoded: false)
+        self.id = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        self.bundleURL = std
+        self.bundleID = bundleID
+        self.displayName = displayName
+        self.version = version
+        self.bundleSizeBytes = bundleSizeBytes
+        self.residuals = residuals
+        self.lastModified = lastModified
+    }
+
+    nonisolated var totalSizeBytes: UInt64 {
+        residuals.reduce(0) { $0 &+ $1.sizeBytes }
+    }
+
+    nonisolated var residualSizeBytes: UInt64 {
+        residuals.reduce(0) { sum, item in
+            item.kind == .appBundle ? sum : (sum &+ item.sizeBytes)
+        }
+    }
+
+    nonisolated var residualFileCount: Int {
+        residuals.reduce(0) { count, item in
+            item.kind == .appBundle ? count : (count + 1)
+        }
+    }
+}
+
 /// Safety classification for a discovered cleanable item.
 enum CleanSafetyTier: String, CaseIterable, Sendable, Equatable {
     /// Rebuildable caches and stale build artifacts; pre-selected by default.
