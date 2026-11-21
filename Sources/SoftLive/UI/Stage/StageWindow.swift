@@ -84,7 +84,11 @@ final class StageWindow: NSPanel {
                 if !isVisible { state.isHovered = false }
                 self.contentView?.isHidden = !isVisible
                 if isVisible {
-                    self.orderFrontRegardless()
+                    if NSApp.isActive {
+                        self.makeKeyAndOrderFront(nil)
+                    } else {
+                        self.orderFrontRegardless()
+                    }
                 } else {
                     self.orderOut(nil)
                 }
@@ -108,6 +112,15 @@ final class StageWindow: NSPanel {
 
     override func performClose(_ sender: Any?) {
         onRequestClose()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "w" {
+            performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     func toggleScreenZoom() {
@@ -144,6 +157,9 @@ private final class StageHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        if NSApp.isActive {
+            window?.makeKey()
+        }
         mouseDownPoint = event.locationInWindow
         super.mouseDown(with: event)
     }

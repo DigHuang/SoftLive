@@ -345,6 +345,90 @@ struct StageCanvasViewTests {
     }
 
     @Test func stageWindowValidatesPerformCloseWithoutTitlebarChromeAndResetsPreference() throws {
+        try withIsolatedStageWindow { window, preferences, appMenu in
+            #expect(window.canBecomeKey)
+            #expect(window.styleMask.contains(.borderless))
+            #expect(window.styleMask.contains(.nonactivatingPanel))
+            #expect(window.styleMask.contains(.resizable))
+            #expect(window.styleMask.contains(.closable))
+            #expect(!window.styleMask.contains(.titled))
+            #expect(window.standardWindowButton(.closeButton) == nil)
+            #expect(window.frameRect(forContentRect: NSRect(origin: .zero, size: StageWindow.defaultSize)).size == StageWindow.defaultSize)
+
+            let mainMenu = appMenu.makeMainMenu()
+            let windowSubmenu = try #require(mainMenu.items[1].submenu)
+            let closeItem = try #require(
+                windowSubmenu.items.first { $0.action == #selector(NSWindow.performClose(_:)) }
+            )
+            let minimizeItem = try #require(
+                windowSubmenu.items.first { $0.action == #selector(NSWindow.performMiniaturize(_:)) }
+            )
+            #expect(window.validateMenuItem(closeItem))
+            #expect(!window.validateMenuItem(minimizeItem))
+
+            window.performClose(nil)
+            #expect(!preferences.showsStageWindow)
+        }
+    }
+
+    @Test func stageWindowHandlesCmdWKeyEquivalentAndIgnoresOtherKeys() throws {
+        try withIsolatedStageWindow { window, preferences, _ in
+            let cmdX = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "x",
+                    charactersIgnoringModifiers: "x",
+                    isARepeat: false,
+                    keyCode: 7
+                )
+            )
+            #expect(!window.performKeyEquivalent(with: cmdX))
+            #expect(preferences.showsStageWindow)
+
+            let cmdShiftW = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command, .shift],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "W",
+                    charactersIgnoringModifiers: "W",
+                    isARepeat: false,
+                    keyCode: 13
+                )
+            )
+            #expect(!window.performKeyEquivalent(with: cmdShiftW))
+            #expect(preferences.showsStageWindow)
+
+            let cmdW = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "w",
+                    charactersIgnoringModifiers: "w",
+                    isARepeat: false,
+                    keyCode: 13
+                )
+            )
+            #expect(window.performKeyEquivalent(with: cmdW))
+            #expect(!preferences.showsStageWindow)
+        }
+    }
+
+    private func withIsolatedStageWindow(
+        _ body: (StageWindow, Preferences, AppMenu) throws -> Void
+    ) throws {
         let suiteName = "SoftLiveStageWindowTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         let frameAutosaveKey = "NSWindow Frame SoftLiveStageWindow"
@@ -367,26 +451,6 @@ struct StageCanvasViewTests {
         let window = StageWindow(model: model, preferences: preferences, menu: appMenu.menu)
         defer { window.orderOut(nil) }
 
-        #expect(window.styleMask.contains(.borderless))
-        #expect(window.styleMask.contains(.nonactivatingPanel))
-        #expect(window.styleMask.contains(.resizable))
-        #expect(window.styleMask.contains(.closable))
-        #expect(!window.styleMask.contains(.titled))
-        #expect(window.standardWindowButton(.closeButton) == nil)
-        #expect(window.frameRect(forContentRect: NSRect(origin: .zero, size: StageWindow.defaultSize)).size == StageWindow.defaultSize)
-
-        let mainMenu = appMenu.makeMainMenu()
-        let windowSubmenu = try #require(mainMenu.items[1].submenu)
-        let closeItem = try #require(
-            windowSubmenu.items.first { $0.action == #selector(NSWindow.performClose(_:)) }
-        )
-        let minimizeItem = try #require(
-            windowSubmenu.items.first { $0.action == #selector(NSWindow.performMiniaturize(_:)) }
-        )
-        #expect(window.validateMenuItem(closeItem))
-        #expect(!window.validateMenuItem(minimizeItem))
-
-        window.performClose(nil)
-        #expect(!preferences.showsStageWindow)
+        try body(window, preferences, appMenu)
     }
 }
