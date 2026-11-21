@@ -28,7 +28,7 @@ enum DesktopWidget {
 struct DesktopWidgetView: View {
     static let cardWidth: CGFloat = 368
     static let expandedHeight: CGFloat = 154
-    static let compactHeight: CGFloat = 88
+    static let compactHeight: CGFloat = 92
     static let innerPadding: CGFloat = 16
     /// Room around the card for the glass rim and shadow.
     static let margin: CGFloat = 14
@@ -61,7 +61,7 @@ struct DesktopWidgetView: View {
                     artwork: activeImage,
                     accent: accent
                 )
-                .frame(height: 56)
+                .frame(height: isExpanded ? 56 : 60)
 
                 if playback != nil {
                     Rectangle()
@@ -180,7 +180,7 @@ struct DesktopWidgetView: View {
                     circleButton(
                         icon: model.isPlaying ? "pause.fill" : "play.fill",
                         isProminent: true,
-                        help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Resume"),
+                        help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Play"),
                         action: model.togglePlayPause
                     )
                     circleButton(
@@ -190,7 +190,7 @@ struct DesktopWidgetView: View {
                     )
                 }
             } else {
-                VStack(alignment: .trailing, spacing: 6) {
+                VStack(alignment: .trailing, spacing: 4) {
                     playPillButton(selected: selected)
                     playerIconBar(selected: selected)
                 }
@@ -257,6 +257,7 @@ struct DesktopWidgetView: View {
                 .font(.system(size: 12, weight: .semibold))
         }
         .foregroundStyle(.primary)
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 12)
         .frame(height: 28)
         .background(prominentControlFill, in: .capsule)

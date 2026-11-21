@@ -6,6 +6,7 @@ import SwiftUI
 /// right-clicking it opens `menu`, and its position is remembered under `frameName`.
 final class OverlayPanel: NSPanel {
     private let allowsKey: Bool
+    private var bindTask: Task<Void, Never>?
 
     init(
         frameName: String,
@@ -38,8 +39,12 @@ final class OverlayPanel: NSPanel {
         contentView = host
 
         if setFrameUsingName(frameName) {
-            if abs(frame.width - size.width) > 0.5 || abs(frame.height - size.height) > 0.5 {
-                setFrame(NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height), display: false)
+            let restored = NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+            let clamped = withoutActuallyEscaping(defaultOrigin) { escapingDefault in
+                Self.clampedFrame(restored, defaultOrigin: escapingDefault)
+            }
+            if clamped != frame {
+                setFrame(clamped, display: false)
             }
         } else if let screen = NSScreen.main?.visibleFrame {
             setFrameOrigin(defaultOrigin(screen, size))
@@ -47,26 +52,80 @@ final class OverlayPanel: NSPanel {
         setFrameAutosaveName(frameName)
     }
 
+    isolated deinit {
+        bindTask?.cancel()
+    }
+
     override var canBecomeKey: Bool { allowsKey && !ignoresMouseEvents }
 
     /// Keeps visibility, click-through and active hit height in sync with observable state.
     func bind(
-        _ state: @escaping @MainActor () -> (isVisible: Bool, clicksThrough: Bool),
-        activeTopHeight: (@MainActor () -> CGFloat?)? = nil
+        _ state: @escaping () -> (isVisible: Bool, clicksThrough: Bool),
+        activeTopHeight: (() -> CGFloat?)? = nil,
+        onVisibilityChange: ((Bool) -> Void)? = nil
     ) -> Self {
-        Task { [weak self] in
+        bindTask?.cancel()
+        bindTask = Task { [weak self] in
+            var lastVisible: Bool?
+            var lastClicksThrough: Bool?
+            var lastTopHeight: CGFloat??
             for await (isVisible, clicksThrough, topHeight) in Observations({
                 let (visible, through) = state()
                 return (visible, through, activeTopHeight?())
             }) {
                 guard let self else { return }
-                ignoresMouseEvents = clicksThrough
-                (contentView as? OverlayHitTesting)?.activeTopHeight = topHeight
-                contentView?.isHidden = !isVisible
-                if isVisible { orderFrontRegardless() } else { orderOut(nil) }
+                if lastClicksThrough != clicksThrough {
+                    lastClicksThrough = clicksThrough
+                    ignoresMouseEvents = clicksThrough
+                }
+                if lastTopHeight != topHeight {
+                    lastTopHeight = topHeight
+                    (contentView as? OverlayHitTesting)?.activeTopHeight = topHeight
+                }
+                if lastVisible != isVisible {
+                    lastVisible = isVisible
+                    contentView?.isHidden = !isVisible
+                    onVisibilityChange?(isVisible)
+                    if isVisible { orderFrontRegardless() } else { orderOut(nil) }
+                }
             }
         }
         return self
+    }
+}
+
+extension NSWindow {
+    /// Clamps a restored frame onto a connected screen's `visibleFrame` (or resets via `defaultOrigin` when off-screen).
+    static func clampedFrame(
+        _ frame: NSRect,
+        visibleFrames: [NSRect] = NSScreen.screens.map(\.visibleFrame),
+        minSize: NSSize? = nil,
+        defaultOrigin: ((_ visibleFrame: NSRect, _ size: NSSize) -> NSPoint)? = nil
+    ) -> NSRect {
+        let targetWidth = minSize.map { max(frame.width, $0.width) } ?? frame.width
+        let targetHeight = minSize.map { max(frame.height, $0.height) } ?? frame.height
+        let targetSize = NSSize(width: targetWidth, height: targetHeight)
+        let sizedFrame = NSRect(x: frame.minX, y: frame.maxY - targetHeight, width: targetWidth, height: targetHeight)
+
+        let bestScreen = visibleFrames.max { a, b in
+            let ia = sizedFrame.intersection(a)
+            let ib = sizedFrame.intersection(b)
+            let areaA = ia.isNull ? 0 : ia.width * ia.height
+            let areaB = ib.isNull ? 0 : ib.width * ib.height
+            return areaA < areaB
+        }
+        guard let screen = bestScreen else { return sizedFrame }
+
+        let intersection = sizedFrame.intersection(screen)
+        if intersection.isNull || intersection.width < 24 || intersection.height < 24, let defaultOrigin {
+            return NSRect(origin: defaultOrigin(screen, targetSize), size: targetSize)
+        }
+
+        let clampedWidth = min(targetWidth, screen.width)
+        let clampedHeight = min(targetHeight, screen.height)
+        let clampedX = min(max(sizedFrame.minX, screen.minX), max(screen.minX, screen.maxX - clampedWidth))
+        let clampedY = min(max(sizedFrame.minY, screen.minY), max(screen.minY, screen.maxY - clampedHeight))
+        return NSRect(x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight)
     }
 }
 

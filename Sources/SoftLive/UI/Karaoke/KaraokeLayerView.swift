@@ -60,7 +60,7 @@ final class KaraokeLayerView: NSView {
     }
 
     static func lineHeight(for fontSize: CGFloat) -> CGFloat {
-        ceil(fontSize * 1.35)
+        ceil(fontSize * 1.4)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -105,7 +105,7 @@ final class KaraokeLayerView: NSView {
         centered: Bool,
         hasShadow: Bool
     ) {
-        let timingChanged = self.playback != playback || self.offset != offset || self.interlude != interlude
+        let timingChanged = self.playback != playback || self.offset != offset || self.interlude != interlude || self.line.words != line.words
         self.line = line
         self.playback = playback
         self.offset = offset
@@ -126,6 +126,13 @@ final class KaraokeLayerView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshIfNeeded(forceSync: true)
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        sungClipLayer.removeAnimation(forKey: Self.karaokeKey)
+        unsungClipLayer.removeAnimation(forKey: Self.karaokeKey)
+        layer?.removeAnimation(forKey: Self.breathKey)
     }
 
     override func viewDidUnhide() {
@@ -244,9 +251,9 @@ final class KaraokeLayerView: NSView {
             let rawStart = originX + CTLineGetOffsetForStringIndex(ctLine, startIdx, nil) * textScale
             let rawEnd = originX + CTLineGetOffsetForStringIndex(ctLine, endIdx, nil) * textScale
             let pad: CGFloat = key.hasShadow ? 4 : 1
-            let startX = index == 0 ? max(0, rawStart - pad) : rawStart
-            let endX = index == key.wordTexts.count - 1 ? min(width, rawEnd + pad) : rawEnd
-            ranges.append(WordRange(startX: startX, endX: max(startX, endX)))
+            let startX = min(width, max(0, index == 0 ? rawStart - pad : rawStart))
+            let endX = min(width, max(startX, index == key.wordTexts.count - 1 ? rawEnd + pad : rawEnd))
+            ranges.append(WordRange(startX: startX, endX: endX))
         }
         wordRanges = ranges
 
@@ -477,17 +484,22 @@ final class KaraokeLayerView: NSView {
 
         var points: [(t: TimeInterval, x: CGFloat)] = [(nowTime, currentX)]
         for (word, range) in zip(words, wordRanges) {
-            let start = word.start
-            let end = start + max(word.duration, 0)
-            if start > nowTime {
+            let lastT = points.last?.t ?? nowTime
+            let start = max(word.start, lastT)
+            let end = max(start, word.start + max(word.duration, 0))
+            if start > lastT {
                 points.append((start, range.startX))
             }
-            if end > nowTime {
+            if end > (points.last?.t ?? nowTime) {
                 points.append((end, range.endX))
             }
         }
-        if points.last?.x != width {
+        if let lastPoint = points.last, lastPoint.t < lineEnd {
             points.append((lineEnd, width))
+        }
+        guard points.count > 1 else {
+            setClipWidth(width)
+            return
         }
 
         let keyTimes = points.map { NSNumber(value: min(max(($0.t - nowTime) / remaining, 0), 1)) }

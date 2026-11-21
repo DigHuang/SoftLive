@@ -11,6 +11,8 @@ final class StageCanvasView: NSView {
     private struct RenderKey: Equatable {
         let lineTime: TimeInterval
         let text: String
+        let words: [LyricWord]?
+        let nextLineTime: TimeInterval?
         let subline: String?
         let interlude: Interlude?
         let style: StageStyle
@@ -31,6 +33,7 @@ final class StageCanvasView: NSView {
 
     private var line = LyricLine(time: 0, text: "")
     private var previousLine: LyricLine?
+    private var currentIsLyricLine = true
     private var nextLineTime: TimeInterval?
     private var subline: String?
     private var interlude: Interlude?
@@ -42,8 +45,11 @@ final class StageCanvasView: NSView {
     private var artwork: NSImage?
 
     private var renderedKey: RenderKey?
+    private var lastOrbSize: CGSize = .zero
     private(set) var activeWords: [StageWordTimeline.WordUnit] = []
     private(set) var activeRowCount: Int = 0
+    var activeAfterimageCount: Int { echoStageLayer.sublayers?.count ?? 0 }
+    var contentSublayers: [CALayer] { contentLayer.sublayers ?? [] }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -67,16 +73,20 @@ final class StageCanvasView: NSView {
         style: StageStyle,
         sparks: Bool,
         palette: StagePalette,
-        artwork: NSImage?
+        artwork: NSImage?,
+        isLyricLine: Bool = true
     ) {
         let timingChanged = self.playback != playback || self.offset != offset || self.interlude != interlude
         let artworkChanged = self.artwork !== artwork
-        if self.line.time != line.time || self.line.text != line.text {
-            if !self.line.text.isEmpty {
-                self.previousLine = self.line
-            }
+        let needsArtworkRebuild = artworkChanged && (interlude != nil || line.text.isEmpty)
+        let trackChanged = self.playback?.track.id != playback?.track.id
+        if trackChanged || interlude != nil || self.interlude != nil || self.playback == nil || !self.currentIsLyricLine {
+            self.previousLine = nil
+        } else if (self.line.time != line.time || self.line.text != line.text), !self.line.text.isEmpty {
+            self.previousLine = self.line
         }
         self.line = line
+        self.currentIsLyricLine = isLyricLine
         self.nextLineTime = nextLineTime
         self.subline = subline
         self.interlude = interlude
@@ -86,7 +96,7 @@ final class StageCanvasView: NSView {
         self.sparksEnabled = sparks
         self.palette = palette
         self.artwork = artwork
-        refreshIfNeeded(forceSync: timingChanged || artworkChanged)
+        refreshIfNeeded(forceSync: timingChanged || needsArtworkRebuild)
     }
 
     override func layout() {
@@ -98,6 +108,13 @@ final class StageCanvasView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshIfNeeded(forceSync: true)
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        orbPrimaryLayer.removeAnimation(forKey: Self.orbDriftKey)
+        orbSecondaryLayer.removeAnimation(forKey: Self.orbDriftKey)
+        contentLayer.removeAnimation(forKey: StageEffects.cameraPulseKey)
     }
 
     override func viewDidUnhide() {
@@ -175,6 +192,11 @@ final class StageCanvasView: NSView {
             orbSecondaryLayer.removeAnimation(forKey: Self.orbDriftKey)
             return
         }
+        if lastOrbSize != bounds.size {
+            orbPrimaryLayer.removeAnimation(forKey: Self.orbDriftKey)
+            orbSecondaryLayer.removeAnimation(forKey: Self.orbDriftKey)
+            lastOrbSize = bounds.size
+        }
         if orbPrimaryLayer.animation(forKey: Self.orbDriftKey) == nil {
             let drift1 = CAKeyframeAnimation(keyPath: "position")
             drift1.values = [
@@ -215,6 +237,8 @@ final class StageCanvasView: NSView {
         let key = RenderKey(
             lineTime: line.time,
             text: line.text,
+            words: line.words,
+            nextLineTime: nextLineTime,
             subline: subline,
             interlude: interlude,
             style: style,

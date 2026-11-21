@@ -402,4 +402,81 @@ struct KaraokeLayerViewTests {
         #expect(mainMenu.performKeyEquivalent(with: quitEvent))
         #expect(quitTriggered)
     }
+
+    @Test func viewDidHideStripsAnimationsAndLongCenteredLineClampsSplitXWithinBounds() throws {
+        let longText = String(repeating: "超长测试歌词文字", count: 16)
+        let words = [
+            LyricWord(start: 10, duration: 0.6, text: String(longText.prefix(20))),
+            LyricWord(start: 10.4, duration: 0.8, text: String(longText.dropFirst(20))),
+        ]
+        let line = LyricLine(time: 10, text: longText, words: words)
+        let track = Track(id: "1", title: "Song", artist: "Artist", album: "", duration: 180, source: .netEase)
+        let playing = PlaybackState(track: track, isPlaying: true, position: 10, at: .now)
+
+        let view = KaraokeLayerView(frame: NSRect(x: 0, y: 0, width: 300, height: 42))
+        view.configure(
+            line: line,
+            playback: playing,
+            offset: 0,
+            fontSize: 30,
+            weight: .semibold,
+            color: .white,
+            centered: true,
+            hasShadow: true
+        )
+
+        for t in stride(from: 9.5, through: 11.5, by: 0.1) {
+            let x = view.splitX(at: t, words: words)
+            #expect(x >= 0)
+            #expect(x <= 300)
+        }
+
+        let clipLayer = try #require(view.layer?.sublayers?.first)
+        let anim = try #require(clipLayer.animation(forKey: "karaoke") as? CAKeyframeAnimation)
+        let keyTimes = try #require(anim.keyTimes).map(\.doubleValue)
+        for i in 1..<keyTimes.count {
+            #expect(keyTimes[i] >= keyTimes[i - 1])
+        }
+
+        // Entering interlude and hiding the view removes running CAAnimations.
+        view.configure(
+            line: LyricLine(time: 0, text: ""),
+            playback: playing,
+            offset: 0,
+            interlude: Interlude(start: 12, end: 24),
+            fontSize: 24,
+            weight: .semibold,
+            color: .white,
+            centered: true,
+            hasShadow: true
+        )
+        #expect(view.layer?.animation(forKey: "interludeBreath") != nil)
+        view.isHidden = true
+        #expect(view.layer?.animation(forKey: "interludeBreath") == nil)
+        #expect(clipLayer.animation(forKey: "karaoke") == nil)
+
+        view.isHidden = false
+        #expect(view.layer?.animation(forKey: "interludeBreath") != nil)
+    }
+
+    @Test func clampsOffscreenRestoredFramesToConnectedVisibleScreen() {
+        let screens = [
+            NSRect(x: 0, y: 0, width: 1440, height: 900),
+            NSRect(x: 1440, y: 0, width: 1920, height: 1080),
+        ]
+        // Completely off-screen frame resets via defaultOrigin when provided.
+        let offscreen = NSRect(x: 4200, y: 200, width: 664, height: 146)
+        let reset = NSWindow.clampedFrame(offscreen, visibleFrames: screens) { visible, size in
+            NSPoint(x: visible.midX - size.width / 2, y: visible.minY + 48)
+        }
+        #expect(screens[0].contains(reset))
+        #expect(reset.minY == 48)
+
+        // Undersized frame expands to minSize and clamps cleanly inside visible screen.
+        let tiny = NSRect(x: 1300, y: 800, width: 300, height: 200)
+        let minSize = NSSize(width: 680, height: 440)
+        let clamped = NSWindow.clampedFrame(tiny, visibleFrames: [screens[0]], minSize: minSize)
+        #expect(clamped.size == minSize)
+        #expect(screens[0].contains(clamped))
+    }
 }

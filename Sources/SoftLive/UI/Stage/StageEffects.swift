@@ -147,17 +147,20 @@ enum StageEffects {
         crossPath.move(to: CGPoint(x: -diag, y: diag))
         crossPath.addLine(to: CGPoint(x: diag, y: -diag))
 
+        let crossHalo = CAShapeLayer()
+        crossHalo.path = crossPath
+        crossHalo.strokeColor = accent.withAlphaComponent(0.36).cgColor
+        crossHalo.lineWidth = isLast ? 7.0 : 5.0
+        crossHalo.lineCap = .round
+
         let crossLayer = CAShapeLayer()
         crossLayer.path = crossPath
         crossLayer.position = center
         crossLayer.strokeColor = NSColor.white.cgColor
         crossLayer.lineWidth = isLast ? 2.6 : 1.8
         crossLayer.lineCap = .round
-        crossLayer.shadowColor = accent.cgColor
-        crossLayer.shadowRadius = 14
-        crossLayer.shadowOpacity = 1.0
-        crossLayer.shadowOffset = .zero
         crossLayer.opacity = 0
+        crossLayer.addSublayer(crossHalo)
         parent.addSublayer(crossLayer)
 
         var times: [TimeInterval] = [nowTime]
@@ -175,16 +178,19 @@ enum StageEffects {
             scales.append(1.15)
             ops.append(1.0)
         }
-        times.append(burstEnd)
-        scales.append(1.65)
-        ops.append(0)
+        if burstEnd > (times.last ?? nowTime) {
+            times.append(burstEnd)
+            scales.append(1.65)
+            ops.append(0)
+        }
 
         let endT = nowTime + remaining
-        if endT > burstEnd {
+        if endT > (times.last ?? nowTime) {
             times.append(endT)
             scales.append(1.65)
             ops.append(0)
         }
+        guard times.count > 1 else { return }
 
         let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
 
@@ -251,16 +257,19 @@ enum StageEffects {
             scales.append(0.85)
             ops.append(0.92)
         }
-        times.append(ringEnd)
-        scales.append(isLast ? 2.25 : 1.75)
-        ops.append(0)
-
-        let endT = nowTime + remaining
-        if endT > ringEnd {
-            times.append(endT)
-            scales.append(2.25)
+        if ringEnd > (times.last ?? nowTime) {
+            times.append(ringEnd)
+            scales.append(isLast ? 2.25 : 1.75)
             ops.append(0)
         }
+
+        let endT = nowTime + remaining
+        if endT > (times.last ?? nowTime) {
+            times.append(endT)
+            scales.append(isLast ? 2.25 : 1.75)
+            ops.append(0)
+        }
+        guard times.count > 1 else { return }
 
         let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
 
@@ -355,18 +364,21 @@ enum StageEffects {
             rots.append(0.0)
             ops.append(0.90)
         }
-        times.append(end)
-        scales.append(1.42)
-        rots.append(0.22)
-        ops.append(0)
+        if end > (times.last ?? nowTime) {
+            times.append(end)
+            scales.append(1.42)
+            rots.append(0.22)
+            ops.append(0)
+        }
 
         let endT = nowTime + remaining
-        if endT > end {
+        if endT > (times.last ?? nowTime) {
             times.append(endT)
             scales.append(1.42)
             rots.append(0.22)
             ops.append(0)
         }
+        guard times.count > 1 else { return }
 
         let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
 
@@ -428,9 +440,6 @@ enum StageEffects {
         sparkLayer.fillColor = nil
         sparkLayer.lineWidth = isLast ? 2.4 : 1.7
         sparkLayer.lineCap = .round
-        sparkLayer.shadowColor = accent.cgColor
-        sparkLayer.shadowRadius = 8
-        sparkLayer.shadowOpacity = 0.85
         sparkLayer.opacity = 0
         parent.addSublayer(sparkLayer)
 
@@ -446,24 +455,27 @@ enum StageEffects {
             opVals.append(0)
         }
         let peak = min(sparkEnd, max(nowTime, word.start) + sparkDuration * 0.28)
-        if peak > nowTime {
+        if peak > (times.last ?? nowTime) {
             times.append(peak)
             headVals.append(0.88)
             tailVals.append(0.18)
             opVals.append(1.0)
         }
-        times.append(sparkEnd)
-        headVals.append(1.0)
-        tailVals.append(0.95)
-        opVals.append(0)
+        if sparkEnd > (times.last ?? nowTime) {
+            times.append(sparkEnd)
+            headVals.append(1.0)
+            tailVals.append(0.95)
+            opVals.append(0)
+        }
 
         let endT = nowTime + remaining
-        if endT > sparkEnd {
+        if endT > (times.last ?? nowTime) {
             times.append(endT)
             headVals.append(1.0)
             tailVals.append(1.0)
             opVals.append(0)
         }
+        guard times.count > 1 else { return }
 
         let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
 

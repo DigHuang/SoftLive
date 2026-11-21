@@ -11,17 +11,19 @@ enum StageWordTimeline {
     static func effectiveWords(for line: LyricLine, nextLineTime: TimeInterval?, perCharacter: Bool = false) -> [WordUnit] {
         if let yrcWords = line.words, !yrcWords.isEmpty {
             guard perCharacter else {
-                return yrcWords.map { w in
+                return yrcWords.compactMap { w in
+                    guard !w.text.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
                     let d = max(0.12, w.duration)
                     return WordUnit(text: w.text, start: w.start, end: w.start + d)
                 }
             }
             var units: [WordUnit] = []
             for w in yrcWords {
+                guard !w.text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
                 let d = max(0.12, w.duration)
                 let subTokens = segmentText(w.text)
                 if subTokens.count <= 1 {
-                    units.append(WordUnit(text: w.text, start: w.start, end: w.start + d))
+                    units.append(WordUnit(text: subTokens.first ?? w.text, start: w.start, end: w.start + d))
                 } else {
                     let step = d / Double(subTokens.count)
                     for (idx, tok) in subTokens.enumerated() {
@@ -60,29 +62,45 @@ enum StageWordTimeline {
                 current = ""
             }
         }
-        for scalar in text.unicodeScalars {
-            if CharacterSet.whitespaces.contains(scalar) {
+        for ch in text {
+            if ch.unicodeScalars.allSatisfy({ CharacterSet.whitespaces.contains($0) }) {
                 if !current.isEmpty {
                     current.append(" ")
                     flush()
                 }
-            } else if isCJKScalar(scalar) {
-                flush()
-                out.append(String(scalar))
+            } else if isStandaloneCJK(ch) {
+                if !current.isEmpty, current.allSatisfy(isOpeningPunctuation) {
+                    out.append(current + String(ch))
+                    current = ""
+                } else {
+                    flush()
+                    out.append(String(ch))
+                }
+            } else if isAttachedPunctuation(ch), current.isEmpty, !out.isEmpty, !isOpeningPunctuation(ch) {
+                out[out.count - 1].append(ch)
             } else {
-                current.append(Character(scalar))
+                current.append(ch)
             }
         }
         flush()
         return out
     }
 
-    private static func isCJKScalar(_ s: UnicodeScalar) -> Bool {
-        switch s.value {
-        case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0x3040...0x30FF, 0xAC00...0xD7AF, 0xFF00...0xFFEF, 0x3000...0x303F:
+    private static func isStandaloneCJK(_ ch: Character) -> Bool {
+        guard ch.unicodeScalars.count == 1, let scalar = ch.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0x3040...0x30FF, 0xAC00...0xD7AF:
             return true
         default:
             return false
         }
+    }
+
+    private static func isOpeningPunctuation(_ ch: Character) -> Bool {
+        "([{\"'「『（【《“‘".contains(ch)
+    }
+
+    private static func isAttachedPunctuation(_ ch: Character) -> Bool {
+        ch.unicodeScalars.allSatisfy { CharacterSet.punctuationCharacters.contains($0) }
     }
 }

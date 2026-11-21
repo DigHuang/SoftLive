@@ -119,7 +119,12 @@ struct StageLuminousRenderer {
         let lineBiasX = (StageWordAnimation.lineRandom(seed: seed, offset: 11) - 0.5) * (w * 0.14)
         let lineBiasY = (StageWordAnimation.lineRandom(seed: seed, offset: 12) - 0.5) * (h * 0.14)
         let diagSlope = (StageWordAnimation.lineRandom(seed: seed, offset: 13) - 0.5) * 0.18
-        let startY = floor((h - totalH) / 2 + totalH - rowSpacing / 2 + lineBiasY + 20)
+        let sideInset = max(48, w * 0.08)
+        let minRowY: CGFloat = 148
+        let maxRowY = max(minRowY, h - 78)
+        let rawStartY = floor((h - totalH) / 2 + totalH - rowSpacing / 2 + lineBiasY + 20)
+        let spanY = CGFloat(max(0, rows.count - 1)) * rowSpacing
+        let startY = min(maxRowY, max(minRowY + min(spanY, maxRowY - minRowY), rawStartY))
 
         for (ri, rowRange) in rows.enumerated() {
             var rowW: CGFloat = 0
@@ -127,14 +132,22 @@ struct StageLuminousRenderer {
                 rowW += shapes[idx].width + (idx + 1 < rowRange.upperBound ? shapes[idx].margin : 0)
             }
             let rowStaggerX = (StageWordAnimation.lineRandom(seed: seed + Double(ri) * 29, offset: 14) - 0.5) * (w * 0.16)
-            var cursorX = floor((w - rowW) / 2 + lineBiasX + rowStaggerX)
+            let minCursorX = sideInset
+            let maxCursorX = max(minCursorX, w - sideInset - rowW)
+            var cursorX = min(maxCursorX, max(minCursorX, floor((w - rowW) / 2 + lineBiasX + rowStaggerX)))
             let rowY = startY - CGFloat(ri) * rowSpacing
 
             for idx in rowRange {
                 let s = shapes[idx]
                 let word = words[idx]
                 let diagLift = (cursorX - w / 2) * diagSlope
-                let center = CGPoint(x: cursorX + s.width / 2 + s.dx, y: rowY + s.dy + diagLift)
+                let halfW = s.width / 2
+                let minCX = sideInset + halfW
+                let maxCX = max(minCX, w - sideInset - halfW)
+                let center = CGPoint(
+                    x: min(maxCX, max(minCX, cursorX + halfW + s.dx)),
+                    y: min(maxRowY, max(minRowY, rowY + s.dy + diagLift))
+                )
                 let isLast = idx == words.count - 1
                 addLuminousWordLayer(
                     word: word,
@@ -361,18 +374,18 @@ struct StageLuminousRenderer {
 
         if sparks {
             let wordSize = CGSize(width: shape.width, height: shape.height)
-            StageEffects.addSparksIfNeeded(
-                in: contentLayer,
-                center: center,
-                wordSize: wordSize,
-                word: word,
-                isLast: isLast,
-                nowTime: nowTime,
-                remaining: remaining,
-                isPlaying: isPlaying,
-                accent: palette.accent
-            )
             if isLast || shape.isAccentColored {
+                StageEffects.addSparksIfNeeded(
+                    in: contentLayer,
+                    center: center,
+                    wordSize: wordSize,
+                    word: word,
+                    isLast: isLast,
+                    nowTime: nowTime,
+                    remaining: remaining,
+                    isPlaying: isPlaying,
+                    accent: palette.accent
+                )
                 StageEffects.addCrossStarburst(
                     in: contentLayer,
                     center: center,
