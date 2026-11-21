@@ -334,6 +334,15 @@ nonisolated enum CleanRuleEngine {
         }
     }
 
+    private static let nonProtectedWorkspaceRelPaths = [
+        "Developer",
+        "Projects",
+        "Code",
+        "Work"
+    ]
+
+    private static let allWorkspaceRelPaths = ["Documents/GitHub"] + nonProtectedWorkspaceRelPaths
+
     /// Performs a full allowlist scan across all 4 categories in parallel across CPU cores.
     nonisolated static func scan(
         environment: CleanEnvironment,
@@ -350,16 +359,84 @@ nonisolated enum CleanRuleEngine {
             case 1:
                 partial = scanDevAndPackageCaches(environment: environment, cancelToken: cancelToken)
             case 2:
-                partial = scanStaleProjectArtifacts(environment: environment, cancelToken: cancelToken)
+                partial = scanStaleProjectArtifacts(
+                    workspaceRelPaths: allWorkspaceRelPaths,
+                    environment: environment,
+                    cancelToken: cancelToken
+                )
             default:
-                partial = scanLeftoversAndInstallers(environment: environment, cancelToken: cancelToken)
+                partial = scanLibraryLeftovers(environment: environment, cancelToken: cancelToken)
+                    + scanDownloadsInstallersRaw(environment: environment, cancelToken: cancelToken)
             }
             guard cancelToken?.isCancelled != true else { return }
             collector.append(contentsOf: partial)
         }
 
         guard cancelToken?.isCancelled != true else { return [] }
-        return collector.elements.sorted { lhs, rhs in
+        return sortCandidates(collector.elements)
+    }
+
+    /// Scans all zero-TCC allowlist locations (`~/Library/*`, Dev caches, and non-TCC project roots)
+    /// without touching TCC-gated `~/Documents` or `~/Downloads`.
+    nonisolated static func scanNonProtected(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        let collector = LockedCollector<CleanCandidate>()
+
+        DispatchQueue.concurrentPerform(iterations: 4) { index in
+            guard cancelToken?.isCancelled != true else { return }
+            let partial: [CleanCandidate]
+            switch index {
+            case 0:
+                partial = scanAppCachesAndLogs(environment: environment, cancelToken: cancelToken)
+            case 1:
+                partial = scanDevAndPackageCaches(environment: environment, cancelToken: cancelToken)
+            case 2:
+                partial = scanStaleProjectArtifacts(
+                    workspaceRelPaths: nonProtectedWorkspaceRelPaths,
+                    environment: environment,
+                    cancelToken: cancelToken
+                )
+            default:
+                partial = scanLibraryLeftovers(environment: environment, cancelToken: cancelToken)
+            }
+            guard cancelToken?.isCancelled != true else { return }
+            collector.append(contentsOf: partial)
+        }
+
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(collector.elements)
+    }
+
+    /// Scans TCC-gated `~/Documents/GitHub` independently so a pending folder prompt never stalls Stage 1.
+    nonisolated static func scanDocumentsGitHub(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        guard cancelToken?.isCancelled != true else { return [] }
+        let items = scanStaleProjectArtifacts(
+            workspaceRelPaths: ["Documents/GitHub"],
+            environment: environment,
+            cancelToken: cancelToken
+        )
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(items)
+    }
+
+    /// Scans TCC-gated `~/Downloads` installers independently so a pending folder prompt never stalls Stage 1.
+    nonisolated static func scanDownloadsInstallers(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        guard cancelToken?.isCancelled != true else { return [] }
+        let items = scanDownloadsInstallersRaw(environment: environment, cancelToken: cancelToken)
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(items)
+    }
+
+    nonisolated static func sortCandidates(_ candidates: [CleanCandidate]) -> [CleanCandidate] {
+        candidates.sorted { lhs, rhs in
             if lhs.sizeBytes != rhs.sizeBytes {
                 return lhs.sizeBytes > rhs.sizeBytes
             }
@@ -647,20 +724,13 @@ nonisolated enum CleanRuleEngine {
     // MARK: - Category 3: Stale Project Build Artifacts
 
     nonisolated private static func scanStaleProjectArtifacts(
+        workspaceRelPaths: [String],
         environment: CleanEnvironment,
         cancelToken: CleanCancellationToken? = nil
     ) -> [CleanCandidate] {
         var candidates: [CleanCandidate] = []
         let home = environment.homeDirectory
         let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
-
-        let workspaceRelPaths = [
-            "Documents/GitHub",
-            "Developer",
-            "Projects",
-            "Code",
-            "Work"
-        ]
 
         for relPath in workspaceRelPaths {
             guard cancelToken?.isCancelled != true else { return [] }
@@ -783,13 +853,12 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Category 4: Orphaned App Leftovers & Leftover Installers
 
-    nonisolated private static func scanLeftoversAndInstallers(
+    nonisolated private static func scanLibraryLeftovers(
         environment: CleanEnvironment,
         cancelToken: CleanCancellationToken? = nil
     ) -> [CleanCandidate] {
         var candidates: [CleanCandidate] = []
         let home = environment.homeDirectory
-        let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
 
         // 4A. Saved Application State (*.savedState)
         let savedStateRoot = home.appending(path: "Library/Saved Application State", directoryHint: .isDirectory)
@@ -865,6 +934,17 @@ nonisolated enum CleanRuleEngine {
                 )
             }
         }
+
+        return candidates
+    }
+
+    nonisolated private static func scanDownloadsInstallersRaw(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        var candidates: [CleanCandidate] = []
+        let home = environment.homeDirectory
+        let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
 
         // 4C. Leftover Installers & Large Archives in ~/Downloads
         let downloadsURL = home.appending(path: "Downloads", directoryHint: .isDirectory)

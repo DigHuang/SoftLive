@@ -754,7 +754,123 @@ import Testing
         cleaner.scan()
         cleaner.cancelInFlightScan()
         #expect(!cleaner.isScanning)
+        #expect(!cleaner.isScanningProtectedFolders)
         #expect(!cleaner.isScanningApps)
+    }
+
+    @Test func progressiveScanSplitsProtectedFoldersPreservesManualSelectionsAndRendersLongBundleID() throws {
+        let fm = FileManager.default
+        let tempRoot = fm.temporaryDirectory
+            .appending(path: "SoftLiveProgressive-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let tempHome = tempRoot.appending(path: "Home", directoryHint: .isDirectory)
+        let tempApps = tempRoot.appending(path: "Applications", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        try fm.createDirectory(at: tempApps, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: tempRoot)
+            L10n.language = .system
+        }
+
+        let now = Date(timeIntervalSince1970: 1_760_000_000)
+        let tenDaysAgo = now.addingTimeInterval(-10 * 86_400)
+
+        // Zero-TCC caches and non-TCC project root (`~/Developer`)
+        let appCache = tempHome.appending(path: "Library/Caches/com.example.cached", directoryHint: .isDirectory)
+        try writeSizedFile(in: appCache, name: "blob.dat", bytes: 128 * 1024, mtime: tenDaysAgo)
+        let devProj = tempHome.appending(path: "Developer/LocalTool", directoryHint: .isDirectory)
+        try writeSizedFile(in: devProj.appending(path: ".build", directoryHint: .isDirectory), name: "obj.o", bytes: 128 * 1024, mtime: tenDaysAgo)
+        try setMTime(devProj, tenDaysAgo)
+
+        let env = CleanEnvironment(
+            homeDirectory: tempHome,
+            runningBundleIDs: [],
+            runningProcessNames: [],
+            installedBundleIDs: [],
+            excludedPaths: [],
+            staleDays: 7,
+            minimumCacheEntryBytes: 1024,
+            minimumInstallerBytes: 64 * 1024,
+            now: now
+        )
+
+        let suiteName = "SoftLiveProgressiveSuite.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = Preferences(defaults: defaults)
+        let cleaner = DiskCleaner(preferences: preferences)
+
+        // Populate Stage 1 before adding Documents/GitHub and Downloads fixtures
+        cleaner.performSynchronousScan(environment: env)
+        #expect(cleaner.candidates.count == 2)
+        let cachedCandidate = try #require(cleaner.candidates.first { $0.title == "Cached" })
+        cleaner.toggleCandidate(cachedCandidate.id) // user manually deselected Stage 1 safe item
+        #expect(!cleaner.selectedIDs.contains(cachedCandidate.id))
+
+        // Add TCC-gated locations (`~/Documents/GitHub` and `~/Downloads`)
+        let docsProj = tempHome.appending(path: "Documents/GitHub/DocsRepo", directoryHint: .isDirectory)
+        try writeSizedFile(in: docsProj.appending(path: "node_modules", directoryHint: .isDirectory), name: "pkg.js", bytes: 256 * 1024, mtime: tenDaysAgo)
+        try setMTime(docsProj, tenDaysAgo)
+        let downloadsDir = tempHome.appending(path: "Downloads", directoryHint: .isDirectory)
+        try writeSizedFile(in: downloadsDir, name: "OldApp.dmg", bytes: 256 * 1024, mtime: tenDaysAgo)
+
+        // 1. Stage 1 non-protected scan must skip Documents/GitHub and Downloads
+        let stage1 = CleanRuleEngine.scanNonProtected(environment: env)
+        let stage1Titles = Set(stage1.map(\.title))
+        #expect(stage1Titles.contains("Cached"))
+        #expect(stage1Titles.contains("LocalTool · .build"))
+        #expect(!stage1Titles.contains("DocsRepo · node_modules"))
+        #expect(!stage1Titles.contains("OldApp.dmg"))
+
+        // 2. Stage 2 protected-folder helpers find only their respective directories
+        let docsResults = CleanRuleEngine.scanDocumentsGitHub(environment: env)
+        #expect(docsResults.map(\.title) == ["DocsRepo · node_modules"])
+        let downloadResults = CleanRuleEngine.scanDownloadsInstallers(environment: env)
+        #expect(downloadResults.map(\.title) == ["OldApp.dmg"])
+
+        // 3. Merging Stage 2 results preserves existing manual selection changes and deduplicates
+        cleaner.mergeProtectedScanResults(docsResults + downloadResults + stage1)
+        #expect(cleaner.candidates.count == 4) // no duplicates from re-merging stage1
+        #expect(!cleaner.selectedIDs.contains(cachedCandidate.id)) // user toggle preserved
+        let docsItem = try #require(cleaner.candidates.first { $0.title == "DocsRepo · node_modules" })
+        let dmgItem = try #require(cleaner.candidates.first { $0.title == "OldApp.dmg" })
+        #expect(cleaner.selectedIDs.contains(docsItem.id)) // newly arrived .safe item selected
+        #expect(!cleaner.selectedIDs.contains(dmgItem.id)) // newly arrived .checkFirst item stays unchecked
+
+        // 4. VER-10: Long bundleID in App Uninstaller hero header renders cleanly alongside non-truncating size suffix
+        _ = try createMockAppBundle(
+            in: tempApps,
+            bundleName: "Claude.app",
+            bundleID: "com.anthropic.claudefordesktop.helper.very.long.identifier",
+            displayName: "Claude",
+            version: "1.2.3",
+            binaryBytes: 128 * 1024
+        )
+        cleaner.performSynchronousAppScan(homeDirectory: tempHome, applicationDirectories: [tempApps])
+        cleaner.mode = .appUninstall
+        let model = PlaybackModel(sources: [])
+        let monitor = SystemMonitor(preferences: preferences)
+        let state = ControlCenterState()
+        state.isOpen = true
+        state.selectedSection = .cleaner
+
+        preferences.language = .en
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.minWindowSize
+        )
+        preferences.language = .zhHans
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.defaultSize
+        )
     }
 
     private func assertCleanerPaneRenders(

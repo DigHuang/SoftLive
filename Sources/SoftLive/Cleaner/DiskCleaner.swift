@@ -12,6 +12,7 @@ final class DiskCleaner {
 
     private(set) var diskSpace: DiskSpaceSummary
     private(set) var isScanning = false
+    private(set) var isScanningProtectedFolders = false
     private(set) var isCleaning = false
     private(set) var candidates: [CleanCandidate] = []
     private(set) var selectedIDs: Set<String> = []
@@ -32,6 +33,8 @@ final class DiskCleaner {
 
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private var scanTask: Task<Void, Never>?
+    @ObservationIgnored private var documentsScanTask: Task<Void, Never>?
+    @ObservationIgnored private var downloadsScanTask: Task<Void, Never>?
     @ObservationIgnored private var scanCancelToken: CleanCancellationToken?
     @ObservationIgnored private var scanGeneration: UInt64 = 0
     @ObservationIgnored private var appScanTask: Task<Void, Never>?
@@ -55,6 +58,8 @@ final class DiskCleaner {
     isolated deinit {
         scanCancelToken?.cancel()
         scanTask?.cancel()
+        documentsScanTask?.cancel()
+        downloadsScanTask?.cancel()
         appScanCancelToken?.cancel()
         appScanTask?.cancel()
         dropInspectTask?.cancel()
@@ -270,17 +275,24 @@ final class DiskCleaner {
         diskSpace = DiskSpaceSummary.current()
     }
 
-    /// Starts an asynchronous allowlist scan on a background thread.
+    /// Starts a two-stage asynchronous allowlist scan off MainActor:
+    /// Stage 1 scans zero-TCC paths and publishes immediately; Stage 2 checks `~/Documents/GitHub`
+    /// and `~/Downloads` in independent tasks so pending TCC prompts never stall Stage 1 results.
     func scan() {
         scanCancelToken?.cancel()
         scanTask?.cancel()
         scanTask = nil
+        documentsScanTask?.cancel()
+        documentsScanTask = nil
+        downloadsScanTask?.cancel()
+        downloadsScanTask = nil
         scanGeneration &+= 1
         let currentGen = scanGeneration
         let cancelToken = CleanCancellationToken()
         scanCancelToken = cancelToken
 
         isScanning = true
+        isScanningProtectedFolders = false
         lastReport = nil
 
         let staleDays = preferences.cleanStaleThreshold.rawValue
@@ -292,15 +304,87 @@ final class DiskCleaner {
                 staleDays: staleDays,
                 runningSnapshot: runningSnapshot
             )
-            let discovered = CleanRuleEngine.scan(environment: environment, cancelToken: cancelToken)
+            let nonProtected = CleanRuleEngine.scanNonProtected(
+                environment: environment,
+                cancelToken: cancelToken
+            )
             guard !cancelToken.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.scanGeneration == currentGen, !cancelToken.isCancelled else { return }
                 self.scanTask = nil
-                self.scanCancelToken = nil
                 self.diskSpace = space
-                self.applyScanResults(discovered)
+                self.applyScanResults(nonProtected)
+                self.startProtectedFolderScans(
+                    environment: environment,
+                    generation: currentGen,
+                    cancelToken: cancelToken
+                )
             }
+        }
+    }
+
+    private func startProtectedFolderScans(
+        environment: CleanEnvironment,
+        generation: UInt64,
+        cancelToken: CleanCancellationToken
+    ) {
+        isScanningProtectedFolders = true
+
+        documentsScanTask = Task.detached(priority: .utility) { [weak self] in
+            let docsItems = CleanRuleEngine.scanDocumentsGitHub(
+                environment: environment,
+                cancelToken: cancelToken
+            )
+            guard !cancelToken.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.scanGeneration == generation, !cancelToken.isCancelled else { return }
+                self.documentsScanTask = nil
+                self.mergeProtectedScanResults(docsItems)
+                self.finishProtectedFolderScanIfIdle()
+            }
+        }
+
+        downloadsScanTask = Task.detached(priority: .utility) { [weak self] in
+            let downloadsItems = CleanRuleEngine.scanDownloadsInstallers(
+                environment: environment,
+                cancelToken: cancelToken
+            )
+            guard !cancelToken.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.scanGeneration == generation, !cancelToken.isCancelled else { return }
+                self.downloadsScanTask = nil
+                self.mergeProtectedScanResults(downloadsItems)
+                self.finishProtectedFolderScanIfIdle()
+            }
+        }
+    }
+
+    private func finishProtectedFolderScanIfIdle() {
+        if documentsScanTask == nil && downloadsScanTask == nil {
+            isScanningProtectedFolders = false
+            scanCancelToken = nil
+        }
+    }
+
+    /// Merges Stage 2 protected-folder scan additions into `candidates`, deduplicating without overwriting
+    /// manual selection toggles made on existing Stage 1 entries.
+    func mergeProtectedScanResults(_ additions: [CleanCandidate]) {
+        guard !additions.isEmpty else { return }
+        var existingIDs = Set(candidates.map(\.id))
+        var existingResolvedPaths = Set(candidates.map { CleanRuleEngine.canonicalResolvedPath($0.url) })
+        var newlyAdded: [CleanCandidate] = []
+        for item in additions {
+            let resolved = CleanRuleEngine.canonicalResolvedPath(item.url)
+            guard existingIDs.insert(item.id).inserted,
+                  existingResolvedPaths.insert(resolved).inserted else {
+                continue
+            }
+            newlyAdded.append(item)
+        }
+        guard !newlyAdded.isEmpty else { return }
+        candidates = CleanRuleEngine.sortCandidates(candidates + newlyAdded)
+        for item in newlyAdded where item.safetyTier.defaultSelected {
+            selectedIDs.insert(item.id)
         }
     }
 
@@ -310,6 +394,11 @@ final class DiskCleaner {
         scanCancelToken = nil
         scanTask?.cancel()
         scanTask = nil
+        documentsScanTask?.cancel()
+        documentsScanTask = nil
+        downloadsScanTask?.cancel()
+        downloadsScanTask = nil
+        isScanningProtectedFolders = false
         scanGeneration &+= 1
         lastReport = nil
         let env = environment ?? CleanEnvironment(
@@ -770,13 +859,18 @@ final class DiskCleaner {
 
     /// Cancels any active scan when the Control Center window closes so background work stops immediately.
     func cancelInFlightScan() {
-        if isScanning {
+        if isScanning || isScanningProtectedFolders {
             scanCancelToken?.cancel()
             scanCancelToken = nil
             scanTask?.cancel()
             scanTask = nil
+            documentsScanTask?.cancel()
+            documentsScanTask = nil
+            downloadsScanTask?.cancel()
+            downloadsScanTask = nil
             scanGeneration &+= 1
             isScanning = false
+            isScanningProtectedFolders = false
         }
         if isScanningApps {
             appScanCancelToken?.cancel()

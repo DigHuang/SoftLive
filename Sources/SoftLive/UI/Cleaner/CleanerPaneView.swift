@@ -457,6 +457,16 @@ struct CleanerPaneView: View {
                 .foregroundStyle(MonitorPalette.emerald)
                 .lineLimit(1)
             }
+        } else if !cleaner.isScanning && cleaner.isScanningProtectedFolders {
+            Text(
+                L10n.tr(
+                    "正在检查文稿与下载目录…",
+                    "Checking Documents & Downloads…"
+                )
+            )
+            .font(.system(size: 11, weight: .regular))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         } else {
             Text(
                 L10n.tr(
@@ -755,7 +765,7 @@ struct CleanerPaneView: View {
             }
 
             Group {
-                if cleaner.isScanning {
+                if cleaner.isScanning && cleaner.candidates.isEmpty {
                     placeholderView(
                         icon: "sparkles",
                         title: L10n.tr("正在按白名单并发扫描…", "Scanning allowlisted caches & leftovers…"),
@@ -1336,16 +1346,22 @@ struct CleanerPaneView: View {
                         }
                     }
 
-                    Text(
-                        L10n.tr(
-                            "\(app.bundleID) · 本体 \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · 关联 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
-                            "\(app.bundleID) · App \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · Data \(CleanCandidate.formatBytes(app.residualSizeBytes))"
+                    HStack(spacing: 4) {
+                        Text(app.bundleID)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(
+                            L10n.tr(
+                                "· 本体 \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · 关联 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
+                                "· App \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · Data \(CleanCandidate.formatBytes(app.residualSizeBytes))"
+                            )
                         )
-                    )
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
+                    }
                     .font(.system(size: 10.5, weight: .regular).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 

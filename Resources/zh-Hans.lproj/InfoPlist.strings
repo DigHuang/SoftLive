@@ -1,1 +1,3 @@
 "NSAppleEventsUsageDescription" = "SoftLive 需要读取 Apple Music 当前播放的歌曲与进度，以同步显示歌词。";
+"NSDocumentsFolderUsageDescription" = "SoftLive 需要只读扫描 ~/Documents/GitHub 下的闲置项目构建缓存，以提示可清理的空间。";
+"NSDownloadsFolderUsageDescription" = "SoftLive 需要只读扫描 ~/Downloads 下的旧安装包与压缩归档，以提示可清理的空间。";
