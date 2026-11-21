@@ -3,6 +3,7 @@ import Foundation
 
 final class ProcessSampler {
     private struct ProcessMeta {
+        let startTime: UInt64
         let name: String
         let bundlePath: String?
     }
@@ -22,29 +23,23 @@ final class ProcessSampler {
         timebaseDenom = Double(max(tb.denom, 1))
     }
 
+    func reset() {
+        previousCPUTicks.removeAll(keepingCapacity: true)
+        previousInstant = nil
+        cachedTopCPU.removeAll(keepingCapacity: true)
+        cachedTopMemory.removeAll(keepingCapacity: true)
+        metaCache.removeAll(keepingCapacity: true)
+    }
+
     /// Snapshots per-process CPU ticks without sorting or resolving metadata.
     /// Called right after popover presentation finishes so one-time window-opening
     /// rendering ticks are not attributed to SoftLive's ongoing CPU percentage.
     func captureBaseline(now: ContinuousClock.Instant = .now) {
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return }
-        var pids = [pid_t](repeating: 0, count: Int(count * 2))
-        let byteSize = Int32(pids.count * MemoryLayout<pid_t>.stride)
-        let actual = Int(proc_listallpids(&pids, byteSize))
-        guard actual > 0 else { return }
-
+        guard let pids = Self.readAllPIDs() else { return }
         var nextCPUTicks: [pid_t: UInt64] = [:]
-        nextCPUTicks.reserveCapacity(actual)
-        for idx in 0..<actual {
-            let pid = pids[idx]
-            guard pid > 0 else { continue }
-            var usage = rusage_info_v4()
-            let res = withUnsafeMutablePointer(to: &usage) { ptr in
-                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rPtr in
-                    proc_pid_rusage(pid, RUSAGE_INFO_V4, rPtr)
-                }
-            }
-            guard res == 0 else { continue }
+        nextCPUTicks.reserveCapacity(pids.count)
+        for pid in pids {
+            guard pid > 0, let usage = Self.readUsage(pid: pid) else { continue }
             nextCPUTicks[pid] = usage.ri_user_time &+ usage.ri_system_time
         }
         previousCPUTicks = nextCPUTicks
@@ -69,12 +64,9 @@ final class ProcessSampler {
         guard needCPU || needMemory else {
             return (cachedTopCPU, cachedTopMemory)
         }
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return (cachedTopCPU, cachedTopMemory) }
-        var pids = [pid_t](repeating: 0, count: Int(count * 2))
-        let byteSize = Int32(pids.count * MemoryLayout<pid_t>.stride)
-        let actual = Int(proc_listallpids(&pids, byteSize))
-        guard actual > 0 else { return (cachedTopCPU, cachedTopMemory) }
+        guard let pids = Self.readAllPIDs() else {
+            return (cachedTopCPU, cachedTopMemory)
+        }
 
         let elapsedSeconds: Double
         if let previousInstant {
@@ -86,23 +78,20 @@ final class ProcessSampler {
 
         let canComputeCPU = elapsedSeconds > 0.05
         var nextCPUTicks: [pid_t: UInt64] = [:]
-        nextCPUTicks.reserveCapacity(actual)
+        nextCPUTicks.reserveCapacity(pids.count)
+        var startTimes: [pid_t: UInt64] = [:]
+        startTimes.reserveCapacity(pids.count)
         var cpuCandidates: [(pid: pid_t, percent: Double, totalTicks: UInt64)] = []
         var memCandidates: [(pid: pid_t, bytes: UInt64)] = []
 
-        for idx in 0..<actual {
-            let pid = pids[idx]
-            guard pid > 0, !excludingPIDs.contains(pid) else { continue }
-            var usage = rusage_info_v4()
-            let res = withUnsafeMutablePointer(to: &usage) { ptr in
-                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rPtr in
-                    proc_pid_rusage(pid, RUSAGE_INFO_V4, rPtr)
-                }
-            }
-            guard res == 0 else { continue }
+        for pid in pids {
+            guard pid > 0, !excludingPIDs.contains(pid),
+                  let usage = Self.readUsage(pid: pid)
+            else { continue }
 
             let totalTicks = usage.ri_user_time &+ usage.ri_system_time
             nextCPUTicks[pid] = totalTicks
+            startTimes[pid] = usage.ri_proc_start_abstime
 
             if needCPU, totalTicks > 0 {
                 let pct: Double
@@ -124,7 +113,9 @@ final class ProcessSampler {
         }
 
         if !metaCache.isEmpty {
-            metaCache = metaCache.filter { nextCPUTicks[$0.key] != nil }
+            metaCache = metaCache.filter { pid, meta in
+                startTimes[pid] == meta.startTime
+            }
         }
 
         if canComputeCPU || previousInstant == nil {
@@ -141,13 +132,14 @@ final class ProcessSampler {
                     return $0.totalTicks > $1.totalTicks
                 }
                 cachedTopCPU = cpuCandidates.prefix(limit).map { item -> ProcessMetric in
-                    let meta = resolveMeta(for: item.pid)
+                    let meta = resolveMeta(for: item.pid, startTime: startTimes[item.pid] ?? 0)
                     return ProcessMetric(
                         pid: item.pid,
                         name: meta.name,
                         bundlePath: meta.bundlePath,
                         valueText: String(format: "%.1f%%", item.percent),
-                        fraction: min(max(item.percent / 100.0, 0), 1)
+                        fraction: min(max(item.percent / 100.0, 0), 1),
+                        isTerminable: Self.canSignal(pid: item.pid)
                     )
                 }
             } else if !excludingPIDs.isEmpty {
@@ -159,18 +151,27 @@ final class ProcessSampler {
             memCandidates.sort { $0.bytes > $1.bytes }
             let safeTotalMem = Double(max(totalMemoryBytes, 1))
             cachedTopMemory = memCandidates.prefix(limit).map { item -> ProcessMetric in
-                let meta = resolveMeta(for: item.pid)
+                let meta = resolveMeta(for: item.pid, startTime: startTimes[item.pid] ?? 0)
                 return ProcessMetric(
                     pid: item.pid,
                     name: meta.name,
                     bundlePath: meta.bundlePath,
                     valueText: SystemMetrics.formatBytes(item.bytes),
-                    fraction: min(max(Double(item.bytes) / (safeTotalMem * 0.4), 0), 1)
+                    fraction: min(max(Double(item.bytes) / (safeTotalMem * 0.4), 0), 1),
+                    isTerminable: Self.canSignal(pid: item.pid)
                 )
             }
         }
 
         return (cachedTopCPU, cachedTopMemory)
+    }
+
+    static func canSignal(pid: pid_t) -> Bool {
+        guard pid > 1, pid != getpid() else { return false }
+        if kill(pid, 0) == 0 {
+            return true
+        }
+        return errno != EPERM
     }
 
     static func terminate(pid: pid_t, force: Bool = false) -> Bool {
@@ -182,12 +183,32 @@ final class ProcessSampler {
         return false
     }
 
+    private static func readAllPIDs() -> ArraySlice<pid_t>? {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return nil }
+        var pids = [pid_t](repeating: 0, count: Int(count * 2))
+        let byteSize = Int32(pids.count * MemoryLayout<pid_t>.stride)
+        let actual = Int(proc_listallpids(&pids, byteSize))
+        guard actual > 0 else { return nil }
+        return pids.prefix(min(actual, pids.count))
+    }
+
+    private static func readUsage(pid: pid_t) -> rusage_info_v4? {
+        var usage = rusage_info_v4()
+        let res = withUnsafeMutablePointer(to: &usage) { ptr in
+            ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rPtr in
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, rPtr)
+            }
+        }
+        return res == 0 ? usage : nil
+    }
+
     private static let genericCLIBinaries: Set<String> = [
         "node", "bun", "deno", "python", "python3", "ruby", "java", "php", "perl", "sh", "bash", "zsh",
     ]
 
-    private func resolveMeta(for pid: pid_t) -> ProcessMeta {
-        if let cached = metaCache[pid] {
+    private func resolveMeta(for pid: pid_t, startTime: UInt64) -> ProcessMeta {
+        if let cached = metaCache[pid], cached.startTime == startTime {
             return cached
         }
         var pathBuf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
@@ -221,7 +242,7 @@ final class ProcessSampler {
             bundlePath = fullPath
         }
 
-        let meta = ProcessMeta(name: name, bundlePath: bundlePath)
+        let meta = ProcessMeta(startTime: startTime, name: name, bundlePath: bundlePath)
         if metaCache.count > 256 {
             metaCache.removeAll(keepingCapacity: true)
         }
@@ -307,16 +328,17 @@ final class ProcessSampler {
         }
         guard argc > 0 else { return [] }
 
+        let bound = min(size, buffer.count)
         var offset = 4
-        while offset < size && buffer[offset] != 0 { offset += 1 }
-        while offset < size && buffer[offset] == 0 { offset += 1 }
+        while offset < bound && buffer[offset] != 0 { offset += 1 }
+        while offset < bound && buffer[offset] == 0 { offset += 1 }
 
         var args: [String] = []
         let maxArgs = Int(min(argc, 6))
         args.reserveCapacity(maxArgs)
-        while offset < size && args.count < maxArgs {
+        while offset < bound && args.count < maxArgs {
             let start = offset
-            while offset < size && buffer[offset] != 0 { offset += 1 }
+            while offset < bound && buffer[offset] != 0 { offset += 1 }
             if offset > start {
                 let str = String(decoding: buffer[start..<offset], as: UTF8.self)
                     .trimmingCharacters(in: .whitespacesAndNewlines)

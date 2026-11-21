@@ -9,7 +9,7 @@ enum MonitorPalette {
     static let purple = adaptive(light: (0.69, 0.32, 0.87), dark: (0.75, 0.52, 0.99))   // #AF52DE / #C084FC
     static let emerald = adaptive(light: (0.06, 0.65, 0.50), dark: (0.20, 0.83, 0.60))  // #10B981 / #34D399
     static let teal = adaptive(light: (0.05, 0.58, 0.53), dark: (0.18, 0.83, 0.75))     // #0D9488 / #2DD4BF
-    static let amber = adaptive(light: (0.96, 0.58, 0.04), dark: (0.98, 0.75, 0.14))    // #F59E0B / #FBBF24
+    static let amber = adaptive(light: (0.72, 0.38, 0.00), dark: (0.98, 0.75, 0.14))    // #B86100 / #FBBF24
     static let orange = adaptive(light: (1.00, 0.42, 0.00), dark: (0.98, 0.57, 0.24))   // #FF6B00 / #FB923C
     static let coral = adaptive(light: (0.94, 0.27, 0.27), dark: (0.97, 0.44, 0.44))    // #EF4444 / #F87171
 
@@ -84,6 +84,8 @@ struct MonitorPopoverView: View {
     @State private var confirmingPID: pid_t?
     @State private var frozenProcesses: [ProcessMetric]?
     @State private var confirmResetTask: Task<Void, Never>?
+    @State private var terminateErrorMessage: String?
+    @State private var errorResetTask: Task<Void, Never>?
 
     private var metrics: SystemMetrics { monitor.detailMetrics }
     private var selectedTab: MonitorTab { monitor.activeTab }
@@ -132,6 +134,12 @@ struct MonitorPopoverView: View {
         .padding(Self.margin)
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         .animation(.spring(duration: 0.28, bounce: 0.05), value: selectedTab)
+        .onChange(of: monitor.isDetailActive) { _, active in
+            if !active {
+                cancelConfirm()
+                clearTerminateError()
+            }
+        }
         .focusEffectDisabled()
     }
 
@@ -308,7 +316,7 @@ struct MonitorPopoverView: View {
 
             // Top 10 CPU Processes Card (with inline Kill button)
             processListCard(
-                title: L10n.tr("高占用进程 Top 10 (CPU)", "Top 10 CPU Processes"),
+                title: L10n.tr("CPU 占用 Top 10", "Top 10 CPU Processes"),
                 processes: d.topProcesses,
                 barColor: accent
             )
@@ -380,6 +388,8 @@ struct MonitorPopoverView: View {
                             ))
                                 .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                         Spacer()
                         Text(SystemMetrics.formatPercentage(metrics.memoryUsage))
@@ -436,7 +446,7 @@ struct MonitorPopoverView: View {
 
             // Top 10 Memory Hogs Card (with inline Kill button)
             processListCard(
-                title: L10n.tr("内存大户排行 Top 10 (Phys Footprint)", "Top 10 Memory Processes"),
+                title: L10n.tr("内存占用 Top 10", "Top 10 Memory Processes"),
                 processes: d.topProcesses,
                 barColor: accent
             )
@@ -468,7 +478,7 @@ struct MonitorPopoverView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text(L10n.tr("SoC 核心温度", "SoC Temperature"))
+                                Text(L10n.tr("SoC 核心温度", "SoC Temp"))
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
@@ -479,6 +489,7 @@ struct MonitorPopoverView: View {
                                     .padding(.vertical, 1.5)
                                     .background(accent.opacity(0.14), in: Capsule())
                                     .lineLimit(1)
+                                    .fixedSize()
                             }
                             Text(L10n.tr(
                                 "峰值 \(SystemMetrics.formatTemperatureDetail(d.maxDieCelsius)) · 最低 \(SystemMetrics.formatTemperatureDetail(d.minDieCelsius))",
@@ -486,6 +497,8 @@ struct MonitorPopoverView: View {
                             ))
                                 .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                         Spacer()
                         Text(SystemMetrics.formatTemperatureDetail(metrics.temperatureCelsius))
@@ -587,9 +600,9 @@ struct MonitorPopoverView: View {
     }
 
     private func thermalStateText(_ celsius: Double?) -> String {
-        guard let celsius else { return L10n.tr("传感器就绪", "Sensors Ready") }
-        if celsius >= 80 { return L10n.tr("高温降频预警", "Thermal Throttling") }
-        if celsius >= 60 { return L10n.tr("高负载温升", "Warm Under Load") }
+        guard let celsius else { return L10n.tr("传感器就绪", "Ready") }
+        if celsius >= 80 { return L10n.tr("高温预警", "Throttling") }
+        if celsius >= 60 { return L10n.tr("高负载温升", "Warm") }
         return L10n.tr("热状态正常", "Nominal")
     }
 
@@ -602,16 +615,28 @@ struct MonitorPopoverView: View {
     ) -> some View {
         let displayList = (confirmingPID != nil ? (frozenProcesses ?? processes) : processes)
         let currentPID = getpid()
+        let headerHintText: String = if let error = terminateErrorMessage {
+            error
+        } else if confirmingPID != nil {
+            L10n.tr("再次点击确认结束", "Click Quit to confirm")
+        } else {
+            L10n.tr("点击 ✕ 结束", "Click ✕ to quit")
+        }
+        let headerHintHighlighted = terminateErrorMessage != nil || confirmingPID != nil
         return hudCard {
             VStack(alignment: .leading, spacing: 5) {
-                HStack {
+                HStack(spacing: 8) {
                     Text(title)
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(confirmingPID != nil ? L10n.tr("再次点击红色按钮确认结束", "Click red button to confirm") : L10n.tr("点击 ✕ 结束进程", "Click ✕ to quit process"))
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: 4)
+                    Text(headerHintText)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(confirmingPID != nil ? MonitorPalette.coral : .secondary.opacity(0.8))
+                        .foregroundStyle(headerHintHighlighted ? MonitorPalette.coral : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
                 .padding(.bottom, 1)
 
@@ -619,7 +644,7 @@ struct MonitorPopoverView: View {
                     if index < displayList.count {
                         let proc = displayList[index]
                         let isConfirming = confirmingPID == proc.pid
-                        let canKill = proc.pid > 1 && proc.pid != currentPID
+                        let canKill = proc.isTerminable && proc.pid > 1 && proc.pid != currentPID
                         HStack(spacing: 6) {
                             Text("\(index + 1)")
                                 .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
@@ -666,8 +691,11 @@ struct MonitorPopoverView: View {
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             let targetPID = proc.pid
+                                            let targetName = proc.name
                                             cancelConfirm()
-                                            monitor.terminateProcess(pid: targetPID)
+                                            if !monitor.terminateProcess(pid: targetPID) {
+                                                showTerminateError(for: targetName)
+                                            }
                                         }
                                 } else {
                                     Image(systemName: "xmark")
@@ -677,6 +705,7 @@ struct MonitorPopoverView: View {
                                         .background(trackColor, in: Circle())
                                         .contentShape(Rectangle())
                                         .onTapGesture {
+                                            clearTerminateError()
                                             armConfirm(for: proc.pid, currentProcesses: processes)
                                         }
                                 }
@@ -720,6 +749,22 @@ struct MonitorPopoverView: View {
         confirmResetTask = nil
         confirmingPID = nil
         frozenProcesses = nil
+    }
+
+    private func showTerminateError(for name: String) {
+        errorResetTask?.cancel()
+        terminateErrorMessage = L10n.tr("无法结束 \(name)", "Cannot quit \(name)")
+        errorResetTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            terminateErrorMessage = nil
+        }
+    }
+
+    private func clearTerminateError() {
+        errorResetTask?.cancel()
+        errorResetTask = nil
+        terminateErrorMessage = nil
     }
 
     // MARK: - Footer Bar (Live Network)

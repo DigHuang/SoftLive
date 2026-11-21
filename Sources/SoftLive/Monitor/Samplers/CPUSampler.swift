@@ -30,6 +30,8 @@ struct CPUTicks: Equatable, Sendable {
 }
 
 final class CPUSampler {
+    private static let hostPort: mach_port_t = mach_host_self()
+
     private var previousTotal: CPUTicks?
     private var previousCores: [CPUTicks] = []
     private var lastBaselineTotal: CPUTicks?
@@ -45,6 +47,15 @@ final class CPUSampler {
         self.chipName = brand.isEmpty ? "Apple Silicon" : brand
         self.efficiencyCoreCount = Sysctl.int("hw.perflevel1.logicalcpu")
         self.cachedDetails.chipName = self.chipName
+    }
+
+    func reset() {
+        previousTotal = nil
+        previousCores.removeAll(keepingCapacity: true)
+        lastBaselineTotal = nil
+        lastBaselineCores.removeAll(keepingCapacity: true)
+        cachedUsage = 0
+        cachedDetails = CPUDetails(chipName: chipName)
     }
 
     func sample(includeDetails: Bool = false, topProcesses: [ProcessMetric] = []) -> (usage: Double, details: CPUDetails) {
@@ -112,7 +123,7 @@ final class CPUSampler {
         var infoCount: mach_msg_type_number_t = 0
 
         let result = host_processor_info(
-            mach_host_self(),
+            hostPort,
             PROCESSOR_CPU_LOAD_INFO,
             &processorCount,
             &infoArray,

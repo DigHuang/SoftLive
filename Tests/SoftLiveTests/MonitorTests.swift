@@ -39,6 +39,8 @@ import Testing
         #expect(SystemMetrics.formatBytes(0) == "0 MB")
         #expect(SystemMetrics.formatBytes(512 * 1_048_576) == "512 MB")
         #expect(SystemMetrics.formatBytes(20 * 1_073_741_824) == "20.0 GB")
+        #expect(SystemMetrics.formatCompactBytes(512 * 1_048_576) == "512M")
+        #expect(SystemMetrics.formatCompactBytes(2 * 1_073_741_824) == "2.0G")
 
         #expect(SystemMetrics.formatRate(512) == "0 B/s")
         #expect(SystemMetrics.formatRate(128 * 1024) == "128 KB/s")
@@ -47,8 +49,12 @@ import Testing
 
         #expect(SystemMetrics.formatCompactRate(512) == "0 B")
         #expect(SystemMetrics.formatCompactRate(621 * 1024) == "621 KB")
+        #expect(SystemMetrics.formatCompactRate(UInt64(999.6 * 1024)) == "1.0 MB")
         #expect(SystemMetrics.formatCompactRate(UInt64(2.4 * 1_048_576)) == "2.4 MB")
+        #expect(SystemMetrics.formatCompactRate(UInt64(9.96 * 1_048_576)) == "10 MB")
         #expect(SystemMetrics.formatCompactRate(25 * 1_048_576) == "25 MB")
+        #expect(SystemMetrics.formatCompactRate(UInt64(999.6 * 1_048_576)) == "1.0 GB")
+        #expect(SystemMetrics.formatCompactRate(UInt64(12.3 * 1_073_741_824)) == "12 GB")
     }
 
     @Test func rendersColoredStatusBarImageWithVerticalBars() {
@@ -97,6 +103,58 @@ import Testing
         let tmpAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 55.5))
         #expect(tmpBelow.tmpBarSteps == tmpAbove.tmpBarSteps)
         #expect(tmpBelow != tmpAbove)
+
+        // Crossing the 0.01 bar-visibility threshold must produce distinct DisplayKeys.
+        let hiddenBar = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.005))
+        let visibleBar = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.025))
+        #expect(hiddenBar.cpuBarSteps == 0)
+        #expect(visibleBar.cpuBarSteps == 1)
+        #expect(hiddenBar != visibleBar)
+    }
+
+    @Test func disablesAndReenablesSystemMonitorCleanly() async {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+
+        for _ in 0..<40 where monitor.metrics.memoryUsage == 0 {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(monitor.metrics.memoryUsage > 0)
+
+        monitor.setDetailActive(true)
+        #expect(monitor.isDetailActive)
+
+        prefs.showsSystemMonitor = false
+        for _ in 0..<40 where monitor.metrics != .zero || monitor.isDetailActive {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(monitor.metrics == .zero)
+        #expect(monitor.detailMetrics == .zero)
+        #expect(!monitor.isDetailActive)
+
+        prefs.showsSystemMonitor = true
+        for _ in 0..<40 where monitor.metrics.memoryUsage == 0 {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(monitor.metrics.memoryUsage > 0)
+    }
+
+    @Test func rejectsProtectedProcessTerminationSafely() {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+        #expect(!ProcessSampler.canSignal(pid: 0))
+        #expect(!ProcessSampler.canSignal(pid: 1))
+        #expect(!ProcessSampler.canSignal(pid: getpid()))
+        #expect(!monitor.terminateProcess(pid: 1))
+        #expect(!monitor.terminateProcess(pid: getpid()))
     }
 
     @Test func togglesDetailActiveModeCleanly() {
@@ -234,6 +292,16 @@ import Testing
         let resetRates = NetworkCounters.rates(from: curr, to: reset, elapsedSeconds: 1.0)
         #expect(resetRates.downloadBytesPerSec == 0)
         #expect(resetRates.uploadBytesPerSec == 0)
+
+        // Single-direction wraparound should preserve the other direction's rate
+        let partialWrap = NetworkCounters(receivedBytes: 100, sentBytes: 900_000)
+        let partialRates = NetworkCounters.rates(from: curr, to: partialWrap, elapsedSeconds: 2.0)
+        #expect(partialRates.downloadBytesPerSec == 0)
+        #expect(partialRates.uploadBytesPerSec == 100_000)
+    }
+
+    @Test func smcStructMatchesKernel80ByteLayout() {
+        #expect(SMCSampler.structSize == 80)
     }
 
     @Test func processSamplerDetectsStaleBaselineAndPreservesCacheAcrossShortPolls() {

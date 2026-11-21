@@ -5,6 +5,7 @@ import Observation
 final class LyricsStatusBar {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var lastMaxWidth: CGFloat = 0
+    private var observeTask: Task<Void, Never>?
 
     init(model: PlaybackModel, preferences: Preferences, menu: NSMenu) {
         item.menu = menu
@@ -12,7 +13,7 @@ final class LyricsStatusBar {
             button.image = BrandAssets.syncTemplate
             button.cell?.lineBreakMode = .byTruncatingTail
         }
-        Task { [weak self] in
+        observeTask = Task { [weak self] in
             for await (showsLyrics, showsMonitor, headline, maxWidth) in Observations({
                 (
                     preferences.showsStatusBarLyrics,
@@ -34,6 +35,11 @@ final class LyricsStatusBar {
         }
     }
 
+    isolated deinit {
+        observeTask?.cancel()
+        NSStatusBar.system.removeStatusItem(item)
+    }
+
     private func show(_ text: String, maxWidth: CGFloat) {
         guard let button = item.button,
               button.title != text || item.length == 0 || lastMaxWidth != maxWidth
@@ -44,6 +50,6 @@ final class LyricsStatusBar {
         button.imagePosition = text.isEmpty ? .imageOnly : .noImage
         item.length = text.isEmpty
             ? NSStatusItem.squareLength
-            : min(button.attributedTitle.size().width + 16, maxWidth)
+            : min(ceil(button.attributedTitle.size().width) + 16, maxWidth)
     }
 }
