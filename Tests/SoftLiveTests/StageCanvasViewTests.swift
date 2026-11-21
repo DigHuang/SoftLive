@@ -343,4 +343,50 @@ struct StageCanvasViewTests {
             #expect(keyTimes[i] > keyTimes[i - 1])
         }
     }
+
+    @Test func stageWindowValidatesPerformCloseWithoutTitlebarChromeAndResetsPreference() throws {
+        let suiteName = "SoftLiveStageWindowTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let frameAutosaveKey = "NSWindow Frame SoftLiveStageWindow"
+        let previousFrame = UserDefaults.standard.object(forKey: frameAutosaveKey)
+        let previousLanguage = L10n.language
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            if let previousFrame {
+                UserDefaults.standard.set(previousFrame, forKey: frameAutosaveKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: frameAutosaveKey)
+            }
+            L10n.language = previousLanguage
+        }
+
+        let preferences = Preferences(defaults: defaults)
+        preferences.showsStageWindow = true
+        let model = PlaybackModel(sources: [])
+        let appMenu = AppMenu(model: model, preferences: preferences)
+        let window = StageWindow(model: model, preferences: preferences, menu: appMenu.menu)
+        defer { window.orderOut(nil) }
+
+        #expect(window.styleMask.contains(.borderless))
+        #expect(window.styleMask.contains(.nonactivatingPanel))
+        #expect(window.styleMask.contains(.resizable))
+        #expect(window.styleMask.contains(.closable))
+        #expect(!window.styleMask.contains(.titled))
+        #expect(window.standardWindowButton(.closeButton) == nil)
+        #expect(window.frameRect(forContentRect: NSRect(origin: .zero, size: StageWindow.defaultSize)).size == StageWindow.defaultSize)
+
+        let mainMenu = appMenu.makeMainMenu()
+        let windowSubmenu = try #require(mainMenu.items[1].submenu)
+        let closeItem = try #require(
+            windowSubmenu.items.first { $0.action == #selector(NSWindow.performClose(_:)) }
+        )
+        let minimizeItem = try #require(
+            windowSubmenu.items.first { $0.action == #selector(NSWindow.performMiniaturize(_:)) }
+        )
+        #expect(window.validateMenuItem(closeItem))
+        #expect(!window.validateMenuItem(minimizeItem))
+
+        window.performClose(nil)
+        #expect(!preferences.showsStageWindow)
+    }
 }

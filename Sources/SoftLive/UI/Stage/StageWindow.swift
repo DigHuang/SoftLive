@@ -31,7 +31,7 @@ final class StageWindow: NSPanel {
         self.onRequestClose = { [preferences] in preferences.showsStageWindow = false }
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable, .closable],
             backing: .buffered,
             defer: true
         )
@@ -97,6 +97,14 @@ final class StageWindow: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    // Borderless panels default to returning false for `performClose:` even with `.closable` set.
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performClose(_:)) {
+            return true
+        }
+        return super.validateMenuItem(menuItem)
+    }
 
     override func performClose(_ sender: Any?) {
         onRequestClose()
