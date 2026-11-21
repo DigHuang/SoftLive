@@ -35,5 +35,13 @@ echo "Built $APP"
 
 if [[ "${1:-}" == "--run" ]]; then
     pkill -x SoftLive || true
+    for _ in {1..30}; do
+        pgrep -x SoftLive >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if pgrep -x SoftLive >/dev/null 2>&1; then
+        pkill -9 -x SoftLive || true
+        sleep 0.1
+    fi
     open "$APP"
 fi

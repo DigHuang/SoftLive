@@ -7,15 +7,20 @@ final class NetEasePlayCache {
     /// Called after files were added to or removed from the cache.
     var onChange: (() -> Void)?
 
-    private static let directory = NetEaseClient.dataDirectory?.appending(path: "Caches/online_play_cache", directoryHint: .isDirectory)
+    private static let defaultDirectory = NetEaseClient.dataDirectory?.appending(path: "Caches/online_play_cache", directoryHint: .isDirectory)
+    private let directory: URL?
     private var cachedStarts: [Int: Date]?
     private var lastDirectoryModDate: Date?
-    private lazy var watcher = Self.directory.map { url in
+    private lazy var watcher = directory.map { url in
         FileWatcher(url: url) { [weak self] in
             self?.cachedStarts = nil
             self?.lastDirectoryModDate = nil
             self?.onChange?()
         }
+    }
+
+    init(directory: URL? = NetEasePlayCache.defaultDirectory) {
+        self.directory = directory
     }
 
     func startWatching() { watcher?.start() }
@@ -27,8 +32,9 @@ final class NetEasePlayCache {
 
     /// When each song in the cache last started streaming.
     func starts() -> [Int: Date] {
-        guard let directory = Self.directory else { return [:] }
-        let currentModDate = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard let directory else { return [:] }
+        // Fresh value every time: URL resource values are cached per URL instance.
+        let currentModDate = (try? FileManager.default.attributesOfItem(atPath: directory.path))?[.modificationDate] as? Date
         if let cached = cachedStarts, let currentModDate, let lastDirectoryModDate, currentModDate <= lastDirectoryModDate {
             return cached
         }

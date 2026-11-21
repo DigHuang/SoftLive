@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 
 /// Compact quick-action menu shown from status items and by right-clicking desktop panels,
 /// plus the application's standard `NSApp.mainMenu` for global keyboard shortcuts (`⌘Q`, `⌘W`, `⌘M`, `⌘,`).
@@ -12,6 +13,8 @@ final class AppMenu: NSObject, NSMenuDelegate {
     private let model: PlaybackModel
     private let preferences: Preferences
     private var actions: [() -> Void] = []
+    private var mainMenuUpdaters: [() -> Void] = []
+    private var languageTask: Task<Void, Never>?
 
     init(
         model: PlaybackModel,
@@ -24,6 +27,15 @@ final class AppMenu: NSObject, NSMenuDelegate {
         super.init()
         menu.autoenablesItems = false
         menu.delegate = self
+        languageTask = Task { [weak self] in
+            for await _ in Observations({ L10n.resolved }) {
+                self?.refreshMainMenuTitles()
+            }
+        }
+    }
+
+    isolated deinit {
+        languageTask?.cancel()
     }
 
     /// Builds the application `mainMenu` so standard shortcuts (`⌘Q`, `⌘W`, `⌘M`, `⌘,`, `⌘H`)
@@ -31,10 +43,12 @@ final class AppMenu: NSObject, NSMenuDelegate {
     func makeMainMenu() -> NSMenu {
         _ = NSApplication.shared
         let mainMenu = NSMenu()
+        mainMenuUpdaters.removeAll()
 
         let appRootItem = NSMenuItem()
         mainMenu.addItem(appRootItem)
         let appSubmenu = NSMenu(title: "SoftLive")
+        appSubmenu.delegate = self
         let settingsItem = NSMenuItem(
             title: L10n.tr("配置中心…", "Control Center…"),
             action: #selector(openControlCenterFromShortcut(_:)),
@@ -43,7 +57,7 @@ final class AppMenu: NSObject, NSMenuDelegate {
         settingsItem.target = self
         appSubmenu.addItem(settingsItem)
         appSubmenu.addItem(.separator())
-        appSubmenu.addItem(
+        let hideItem = appSubmenu.addItem(
             withTitle: L10n.tr("隐藏 SoftLive", "Hide SoftLive"),
             action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h"
@@ -60,12 +74,13 @@ final class AppMenu: NSObject, NSMenuDelegate {
         let windowRootItem = NSMenuItem()
         mainMenu.addItem(windowRootItem)
         let windowSubmenu = NSMenu(title: L10n.tr("窗口", "Window"))
-        windowSubmenu.addItem(
+        windowSubmenu.delegate = self
+        let closeItem = windowSubmenu.addItem(
             withTitle: L10n.tr("关闭窗口", "Close Window"),
             action: #selector(NSWindow.performClose(_:)),
             keyEquivalent: "w"
         )
-        windowSubmenu.addItem(
+        let minimizeItem = windowSubmenu.addItem(
             withTitle: L10n.tr("最小化", "Minimize"),
             action: #selector(NSWindow.performMiniaturize(_:)),
             keyEquivalent: "m"
@@ -77,6 +92,7 @@ final class AppMenu: NSObject, NSMenuDelegate {
             (.cleaner, "3"),
             (.about, "4")
         ]
+        var tabItems: [(ControlCenterSection, NSMenuItem)] = []
         for (index, spec) in tabSpecs.enumerated() {
             let tabItem = NSMenuItem(
                 title: spec.0.title,
@@ -86,13 +102,38 @@ final class AppMenu: NSObject, NSMenuDelegate {
             tabItem.tag = index
             tabItem.target = self
             windowSubmenu.addItem(tabItem)
+            tabItems.append((spec.0, tabItem))
         }
         windowRootItem.submenu = windowSubmenu
+
+        mainMenuUpdaters.append { [weak settingsItem, weak hideItem, weak quitItem, weak windowSubmenu, weak closeItem, weak minimizeItem] in
+            settingsItem?.title = L10n.tr("配置中心…", "Control Center…")
+            hideItem?.title = L10n.tr("隐藏 SoftLive", "Hide SoftLive")
+            quitItem?.title = L10n.tr("退出 SoftLive", "Quit SoftLive")
+            windowSubmenu?.title = L10n.tr("窗口", "Window")
+            closeItem?.title = L10n.tr("关闭窗口", "Close Window")
+            minimizeItem?.title = L10n.tr("最小化", "Minimize")
+        }
+        for (section, item) in tabItems {
+            mainMenuUpdaters.append { [weak item] in
+                item?.title = section.title
+            }
+        }
 
         return mainMenu
     }
 
+    private func refreshMainMenuTitles() {
+        for update in mainMenuUpdaters {
+            update()
+        }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === self.menu else {
+            refreshMainMenuTitles()
+            return
+        }
         menu.removeAllItems()
         actions.removeAll()
 
@@ -173,6 +214,7 @@ final class AppMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func runAction(_ sender: NSMenuItem) {
+        guard actions.indices.contains(sender.tag) else { return }
         actions[sender.tag]()
     }
 

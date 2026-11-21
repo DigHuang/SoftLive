@@ -30,5 +30,17 @@ struct TrackMatcherTests {
 
     @Test func buildsCleanSearchKeyword() {
         #expect(TrackMatcher.searchKeyword(for: track) == "Viva La Vida Coldplay")
+        let bracketOnly = Track(id: "2", title: "(Intro)", artist: "Artist", album: "", duration: 60, source: .appleMusic)
+        #expect(TrackMatcher.searchKeyword(for: bracketOnly) == "(Intro) Artist")
+    }
+
+    @Test func rejectsEmptyNormalizedTitlesAndEmptyArtistFalseMatches() {
+        let punctuationTitle = Track(id: "2", title: "???", artist: "", album: "", duration: 120, source: .appleMusic)
+        #expect(TrackMatcher.score(SongCandidate(title: "!!!", artists: ["Someone"], duration: 120), for: punctuationTitle) == nil)
+
+        let noArtistTrack = Track(id: "3", title: "Hello", artist: "", album: "", duration: 120, source: .appleMusic)
+        let withArtist = SongCandidate(title: "Hello", artists: ["Coldplay"], duration: 120)
+        let withoutArtist = SongCandidate(title: "Hello", artists: [], duration: 120)
+        #expect(TrackMatcher.score(withArtist, for: noArtistTrack) == TrackMatcher.score(withoutArtist, for: noArtistTrack))
     }
 }

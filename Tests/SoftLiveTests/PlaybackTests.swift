@@ -44,10 +44,23 @@ struct PlaybackModelTests {
         func artwork(for track: Track) async -> NSImage? { artworks[track.id] }
     }
 
+    private func offlineLyricsService(
+        lyricsByID: [String: Lyrics] = [:]
+    ) -> LyricsService {
+        LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { lyricsByID[String($0)] },
+                netEaseMatch: { lyricsByID[$0.id] },
+                lrcLibMatch: { _ in nil }
+            )
+        )
+    }
+
     @Test func switchesToPlayingSourceAndResetsOffsetOnTrackChange() {
         let first = MockSource(kind: .appleMusic)
         let second = MockSource(kind: .netEase)
-        let model = PlaybackModel(sources: [first, second])
+        let model = PlaybackModel(sources: [first, second], lyricsService: offlineLyricsService())
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
@@ -102,7 +115,7 @@ struct PlaybackModelTests {
         let imageB = NSImage(size: NSSize(width: 20, height: 20))
         source.artworks = ["a": imageA, "b": imageB]
 
-        let model = PlaybackModel(sources: [source])
+        let model = PlaybackModel(sources: [source], lyricsService: offlineLyricsService())
         model.start()
 
         let trackA = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .netEase)
@@ -126,7 +139,7 @@ struct PlaybackModelTests {
         let image = NSImage(size: NSSize(width: 16, height: 16))
         let track = Track(id: "a", title: "Song A", artist: "Artist", album: "", duration: 180, source: .appleMusic)
 
-        let model = PlaybackModel(sources: [source])
+        let model = PlaybackModel(sources: [source], lyricsService: offlineLyricsService())
         model.start()
 
         // First attempt while only recentTrack is known returns nil.
@@ -140,6 +153,77 @@ struct PlaybackModelTests {
         await Task.yield()
         #expect(model.artwork === image)
         #expect(model.recentArtworks[.appleMusic] === image)
+    }
+
+    @Test func clearsDismissedWhenFallingBackToPlayingSourceAndPreservesLyricsOnMetadataUpgrade() async throws {
+        let first = MockSource(kind: .netEase)
+        let second = MockSource(kind: .appleMusic)
+        let lyrics = try #require(Lyrics(lines: [
+            LyricLine(time: 0, text: "first"),
+            LyricLine(time: 20, text: "second"),
+        ]))
+        let model = PlaybackModel(
+            sources: [first, second],
+            lyricsService: offlineLyricsService(lyricsByID: ["100": lyrics])
+        )
+        model.start()
+
+        let track100Placeholder = Track(id: "100", title: "NetEase Music", artist: "", album: "", duration: 0, source: .netEase)
+        let track100Full = Track(id: "100", title: "Real Title", artist: "Artist", album: "Album", duration: 180, source: .netEase)
+        let image100 = NSImage(size: NSSize(width: 12, height: 12))
+        let otherTrack = Track(id: "am1", title: "Apple Song", artist: "Artist", album: "", duration: 180, source: .appleMusic)
+
+        first.state = PlaybackState(track: track100Placeholder, isPlaying: true, position: 1)
+        await Task.yield()
+        #expect(model.lyrics == lyrics)
+        #expect(model.lyricsStatus == .loaded)
+        model.offset = 1.0
+
+        // Upgrading metadata for the same track ID keeps loaded lyrics and manual offset while filling artwork.
+        first.artworks["100"] = image100
+        first.recentTrack = track100Full
+        first.state = PlaybackState(track: track100Full, isPlaying: true, position: 2)
+        await Task.yield()
+        #expect(model.lyrics == lyrics)
+        #expect(model.offset == 1.0)
+        #expect(model.artwork === image100)
+
+        // Both sources playing with `first` active: closing `first` falls back to `second` and clears `isDismissed`.
+        second.state = PlaybackState(track: otherTrack, isPlaying: true, position: 5)
+        first.state = PlaybackState(track: track100Full, isPlaying: true, position: 3)
+        model.closePlayback()
+        #expect(model.playback?.track == otherTrack)
+
+        // Pausing the fallback source must remain visible rather than collapsing to nil.
+        second.state = PlaybackState(track: otherTrack, isPlaying: false, position: 8)
+        #expect(model.playback?.track == otherTrack)
+        #expect(model.isPlaying == false)
+    }
+
+    @Test func refreshesMainMenuTitlesWhenLanguageChanges() throws {
+        let suiteName = "SoftLiveAppMenuL10nTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            L10n.language = .system
+        }
+
+        let preferences = Preferences(defaults: defaults)
+        preferences.language = .zhHans
+        let model = PlaybackModel(sources: [], lyricsService: offlineLyricsService())
+        let appMenu = AppMenu(model: model, preferences: preferences)
+        let mainMenu = appMenu.makeMainMenu()
+        let appSubmenu = try #require(mainMenu.items[0].submenu)
+        let windowSubmenu = try #require(mainMenu.items[1].submenu)
+        #expect(appSubmenu.items.first?.title == "配置中心…")
+        #expect(windowSubmenu.title == "窗口")
+
+        preferences.language = .en
+        appMenu.menuNeedsUpdate(appSubmenu)
+        appMenu.menuNeedsUpdate(windowSubmenu)
+        #expect(appSubmenu.items.first?.title == "Control Center…")
+        #expect(windowSubmenu.title == "Window")
+        #expect(windowSubmenu.items.last?.title == "About")
     }
 }
 
@@ -404,6 +488,66 @@ struct NetEaseLastPlayingTests {
         #expect(tracker.latestTrack?.title == "旧文件末尾曲目")
         #expect(tracker.isPlaying == false)
         #expect(tracker.latest?.position == 25)
+    }
+
+    @Test func pauseTimeoutAfterNoteSongStartedDoesNotRewindBeforeStart() {
+        let tracker = NetEaseLastPlaying()
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var events: [(Bool, Date)] = []
+        tracker.onPlayingChanged = { events.append(($0, $1)) }
+
+        let oldPlay = logEntry(#"{"current":40,"resourceId":"1853884220"}"#)
+        tracker.apply(NetEaseLastPlaying.parse(oldPlay), at: t0, now: t0.addingTimeInterval(0.1))
+        let pauseInfo = logEntry(key: "playingInfo", #"{"playingState":1,"resourceTrackId":"1853884220"}"#)
+        tracker.apply(NetEaseLastPlaying.parse(pauseInfo), at: t0.addingTimeInterval(1), now: t0.addingTimeInterval(1.1))
+
+        let resumeAt = t0.addingTimeInterval(300)
+        tracker.noteSongStarted(at: resumeAt)
+        tracker.handlePauseTimeout()
+
+        #expect(tracker.isPlaying == false)
+        #expect(events.last?.0 == false)
+        #expect(events.last?.1 == resumeAt)
+    }
+
+    @Test func rejectsCorruptOversizedVarintWithoutCrashing() {
+        let prefix = Array("\u{01}\u{1F}_orpheus://orpheus".utf8)
+        var data = Data(prefix)
+        data.append(contentsOf: "\u{0}\u{01}lastPlaying".utf8)
+        // Varint claiming 0x0FFF_FFFF (~268 MB) length followed by format byte 1 and short payload.
+        data.append(contentsOf: [0xFF, 0xFF, 0xFF, 0x7F, 0x01, 0x41, 0x42])
+        let parsed = NetEaseLastPlaying.parse(data)
+        #expect(parsed.progress == nil)
+        #expect(parsed.consumed == prefix.count)
+    }
+}
+
+struct NetEasePlayCacheTests {
+    @Test func detectsNewInfoFilesWhenDirectoryModDateAdvances() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appending(path: "SoftLivePlayCache-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let cache = NetEasePlayCache(directory: tempDir)
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        let first = tempDir.appending(path: "1001-_-128-_-a.info")
+        try Data().write(to: first)
+        try FileManager.default.setAttributes([.creationDate: t0], ofItemAtPath: first.path)
+        try FileManager.default.setAttributes([.modificationDate: t0], ofItemAtPath: tempDir.path)
+
+        let firstStarts = cache.starts()
+        #expect(firstStarts.keys.sorted() == [1001])
+
+        // Advance directory mtime and add another .info file without calling watcher invalidation.
+        let t1 = t0.addingTimeInterval(5)
+        let second = tempDir.appending(path: "2002-_-128-_-b.info")
+        try Data().write(to: second)
+        try FileManager.default.setAttributes([.creationDate: t1], ofItemAtPath: second.path)
+        try FileManager.default.setAttributes([.modificationDate: t1], ofItemAtPath: tempDir.path)
+
+        let updatedStarts = cache.starts()
+        #expect(updatedStarts.keys.sorted() == [1001, 2002])
     }
 }
 

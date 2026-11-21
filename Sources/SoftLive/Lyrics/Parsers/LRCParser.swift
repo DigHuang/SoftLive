@@ -11,7 +11,7 @@ enum LRCParser {
         var lines: [(time: TimeInterval, text: String)] = []
 
         for rawLine in lrc.split(whereSeparator: \.isNewline) {
-            var rest = rawLine[...]
+            var rest = rawLine.drop { $0.isWhitespace || $0 == "\u{FEFF}" }
             var times: [TimeInterval] = []
             while rest.first == "[", let close = rest.firstIndex(of: "]") {
                 let tag = rest[rest.index(after: rest.startIndex)..<close]

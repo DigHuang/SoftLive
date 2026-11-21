@@ -50,9 +50,14 @@ final class NetEaseLastPlaying {
     private var log: (url: URL, offset: UInt64)?
     private var pauseTimer: Timer?
     private var explicitPlaying: Bool?
+    private var startedAt: Date?
 
     init(directory: URL? = NetEaseLastPlaying.defaultDirectory) {
         self.directory = directory
+    }
+
+    isolated deinit {
+        pauseTimer?.invalidate()
     }
 
     func startWatching() {
@@ -71,11 +76,13 @@ final class NetEaseLastPlaying {
         latestTrack = nil
         isPlaying = false
         explicitPlaying = nil
+        startedAt = nil
     }
 
     /// Marks playback as active when another source (such as a newly created streaming-cache `.info` file)
     /// sees a song start before the page has flushed its first `localStorage` entry.
-    func noteSongStarted() {
+    func noteSongStarted(at now: Date = .now) {
+        startedAt = now
         explicitPlaying = nil
         isPlaying = true
         schedulePauseTimer()
@@ -119,6 +126,9 @@ final class NetEaseLastPlaying {
 
         let playingChanged = newPlaying != isPlaying
         isPlaying = newPlaying
+        if !newPlaying || (newReport != nil && date >= (startedAt ?? .distantPast)) {
+            startedAt = nil
+        }
 
         if playingChanged, newPlaying {
             onPlayingChanged?(true, date)
@@ -134,11 +144,17 @@ final class NetEaseLastPlaying {
     private func schedulePauseTimer() {
         pauseTimer?.invalidate()
         pauseTimer = Timer.onMain(after: Self.pauseTimeout, tolerance: 0.4) { [weak self] in
-            guard let self, self.isPlaying else { return }
-            self.explicitPlaying = nil
-            self.isPlaying = false
-            self.onPlayingChanged?(false, self.latest?.date ?? .now)
+            self?.handlePauseTimeout()
         }
+    }
+
+    func handlePauseTimeout() {
+        guard isPlaying else { return }
+        let pauseDate = max(latest?.date ?? .now, startedAt ?? .distantPast)
+        explicitPlaying = nil
+        isPlaying = false
+        startedAt = nil
+        onPlayingChanged?(false, pauseDate)
     }
 
     func followNewestLog() {
@@ -270,6 +286,7 @@ final class NetEaseLastPlaying {
         }
 
         mutating func read(count: Int) -> Data? {
+            guard count >= 0, count <= bytes.count - index else { return nil }
             var data = Data()
             data.reserveCapacity(count)
             while data.count < count {

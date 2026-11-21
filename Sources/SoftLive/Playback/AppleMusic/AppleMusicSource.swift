@@ -66,6 +66,7 @@ final class AppleMusicSource: PlayerSource {
             current.setPlaying(false, at: .now)
             state = current
         }
+        updateSeekCheck()
     }
 
     func nextTrack() {
@@ -85,6 +86,8 @@ final class AppleMusicSource: PlayerSource {
     }
 
     isolated deinit {
+        seekCheckTimer?.invalidate()
+        seekCheckTimer = nil
         if let observer = playerInfoObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
         }

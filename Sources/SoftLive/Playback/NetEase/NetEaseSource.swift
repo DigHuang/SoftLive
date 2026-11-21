@@ -33,7 +33,14 @@ final class NetEaseSource: PlayerSource {
     private var currentPlay: NetEasePlay?
     private var lookup: Task<Void, Never>?
     private var launchPlay: Task<Void, Never>?
+    private var launchTaskID: UUID?
+    private var isPlaceholderTrack = false
     private var calibration = ProgressCalibration()
+
+    isolated deinit {
+        lookup?.cancel()
+        launchPlay?.cancel()
+    }
 
     func start() {
         recentTrack = history.latest()?.track
@@ -49,6 +56,8 @@ final class NetEaseSource: PlayerSource {
     func play() {
         let isRunning = runningObserver?.isRunning == true
         launchPlay?.cancel()
+        launchPlay = nil
+        launchTaskID = nil
 
         // When the client is already running with a loaded track, `resume` continues from the paused position.
         if isRunning, var current = state {
@@ -65,6 +74,7 @@ final class NetEaseSource: PlayerSource {
         if let track = recentTrack ?? history.latest()?.track ?? lastPlaying.latestTrack {
             let resumePos = lastPlaying.latest?.songID == track.netEaseSongID ? (lastPlaying.latest?.position ?? 0) : 0
             lastPlaying.noteSongStarted()
+            isPlaceholderTrack = false
             state = PlaybackState(track: track, isPlaying: true, position: resumePos, at: .now)
         }
         Self.log.info("play requested (running: \(isRunning, privacy: .public))")
@@ -73,14 +83,18 @@ final class NetEaseSource: PlayerSource {
         guard sendOrpheus(resumeCmd) else { return }
         // On cold start, the initial URL event arrives before the client's CEF page registers
         // its message handler; re-send `resume` (which is idempotent) as the page finishes loading.
+        let taskID = UUID()
+        launchTaskID = taskID
         launchPlay = Task { [weak self] in
             for delay in [1.8, 1.4, 1.5] {
                 try? await Task.sleep(for: .seconds(delay))
                 guard let self, !Task.isCancelled else { return }
                 self.sendOrpheus(resumeCmd)
             }
-            self?.launchPlay = nil
-            if let self, self.state?.isPlaying == true, !self.lastPlaying.isPlaying {
+            guard let self, self.launchTaskID == taskID else { return }
+            self.launchPlay = nil
+            self.launchTaskID = nil
+            if self.state?.isPlaying == true, !self.lastPlaying.isPlaying {
                 self.lastPlaying.noteSongStarted()
             }
         }
@@ -89,6 +103,7 @@ final class NetEaseSource: PlayerSource {
     func pause() {
         launchPlay?.cancel()
         launchPlay = nil
+        launchTaskID = nil
         guard runningObserver?.isRunning == true else { return }
         Self.log.info("pause requested")
         sendOrpheus(#"{"cmd":"pause"}"#)
@@ -127,7 +142,12 @@ final class NetEaseSource: PlayerSource {
     }
 
     func artwork(for track: Track) async -> NSImage? {
-        guard let url = track.artworkURL, let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        guard let url = track.artworkURL else { return nil }
+        let request = URLRequest(url: url, timeoutInterval: 10)
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode)
+        else { return nil }
         return NSImage(data: data)
     }
 
@@ -135,11 +155,14 @@ final class NetEaseSource: PlayerSource {
         guard isRunning else {
             launchPlay?.cancel()
             launchPlay = nil
+            launchTaskID = nil
             history.stopWatching()
             playCache.stopWatching()
             lastPlaying.stopWatching()
             lookup?.cancel()
+            lookup = nil
             currentPlay = nil
+            isPlaceholderTrack = false
             state = nil
             return
         }
@@ -151,19 +174,40 @@ final class NetEaseSource: PlayerSource {
 
     private func reload() {
         let entry = history.latest()
-        guard let latest = NetEasePlay.latest(cacheStarts: playCache.starts(), history: entry, report: lastPlaying.latest),
-              isNewPlay(latest)
-        else { return }
+        guard let latest = NetEasePlay.latest(cacheStarts: playCache.starts(), history: entry, report: lastPlaying.latest) else {
+            return
+        }
+        let localTrack = [entry?.track, lastPlaying.latestTrack].compactMap { $0 }.first { $0.netEaseSongID == latest.songID }
+        guard isNewPlay(latest) else {
+            if isPlaceholderTrack, let localTrack, var currentState = state,
+               currentState.track.netEaseSongID == latest.songID {
+                isPlaceholderTrack = false
+                recentTrack = localTrack
+                currentState.track = localTrack
+                state = currentState
+            } else if lookup != nil, state == nil, latest == currentPlay, let localTrack {
+                lookup?.cancel()
+                lookup = nil
+                publish(localTrack, startedAt: latest.start)
+            }
+            return
+        }
         currentPlay = latest
         lookup?.cancel()
-        if let track = [entry?.track, lastPlaying.latestTrack].compactMap({ $0 }).first(where: { $0.netEaseSongID == latest.songID }) {
-            publish(track, startedAt: latest.start)
+        lookup = nil
+        if let localTrack {
+            publish(localTrack, startedAt: latest.start)
             return
         }
         lookup = Task { [weak self] in
             let track = (try? await NetEaseMetadata.track(songID: latest.songID)) ?? nil
             guard let self, !Task.isCancelled, self.currentPlay == latest else { return }
-            self.publish(track ?? .unknownNetEaseSong(latest.songID), startedAt: latest.start)
+            self.lookup = nil
+            if let track {
+                self.publish(track, startedAt: latest.start)
+            } else {
+                self.publish(.unknownNetEaseSong(latest.songID), startedAt: latest.start, isPlaceholder: true)
+            }
         }
     }
 
@@ -178,8 +222,9 @@ final class NetEaseSource: PlayerSource {
         return state.position(at: latest.start) >= state.track.duration
     }
 
-    private func publish(_ track: Track, startedAt start: Date) {
-        if track.title != "网易云音乐" { recentTrack = track }
+    private func publish(_ track: Track, startedAt start: Date, isPlaceholder: Bool = false) {
+        isPlaceholderTrack = isPlaceholder
+        if !isPlaceholder { recentTrack = track }
         let now = Date.now
         let elapsed = now.timeIntervalSince(start)
         Self.log.info("song \(track.id, privacy: .public) \(track.title, privacy: .public) started \(elapsed, format: .fixed(precision: 1))s ago")
@@ -190,6 +235,7 @@ final class NetEaseSource: PlayerSource {
         let staleStart = track.duration > 0 && elapsed > track.duration + 5 || launchPlay != nil
         // A start older than its song that is no longer playing is left over from an earlier session.
         if !isPlaying, staleStart {
+            isPlaceholderTrack = false
             state = nil
             return
         }
@@ -214,14 +260,14 @@ final class NetEaseSource: PlayerSource {
             }
         }
         if !isPlaying {
-            newState.setPlaying(false, at: report?.date ?? now)
+            newState.setPlaying(false, at: max(report?.date ?? now, effectiveStart))
         }
         state = newState
     }
 
     private func reported(_ report: NetEaseLastPlaying.Report) {
         Self.log.debug("page reports song \(report.songID, privacy: .public) at \(report.position, format: .fixed(precision: 0))s")
-        if currentPlay == nil || report.songID != currentPlay?.songID {
+        if currentPlay == nil || report.songID != currentPlay?.songID || isPlaceholderTrack {
             reload()
         }
         calibrate(with: report)
@@ -242,7 +288,7 @@ final class NetEaseSource: PlayerSource {
         reload()
         guard var current = state, current.isPlaying != isPlaying else { return }
         calibration = ProgressCalibration()
-        current.setPlaying(isPlaying, at: date)
+        current.setPlaying(isPlaying, at: max(date, current.anchorDate))
         state = current
     }
 }
@@ -302,6 +348,6 @@ enum NetEaseClient {
 private extension Track {
     /// Stand-in when the song details cannot be fetched (offline); lyrics are still looked up by ID.
     static func unknownNetEaseSong(_ songID: Int) -> Track {
-        Track(id: String(songID), title: "网易云音乐", artist: "", album: "", duration: 0, source: .netEase)
+        Track(id: String(songID), title: PlayerKind.netEase.displayName, artist: "", album: "", duration: 0, source: .netEase)
     }
 }
