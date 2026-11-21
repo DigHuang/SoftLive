@@ -200,6 +200,85 @@ struct PlaybackModelTests {
         #expect(model.isPlaying == false)
     }
 
+    @Test func completesInFlightLyricsAndUpgradesArtworkWhenTrackMetadataArrivesMidFlight() async throws {
+        final class SuspendedMockSource: PlayerSource {
+            let kind = PlayerKind.netEase
+            var state: PlaybackState? { didSet { onChange?() } }
+            var recentTrack: Track? { didSet { onChange?() } }
+            var onChange: (() -> Void)?
+            var artworkGate: CheckedContinuation<Void, Never>?
+            var imagesByHasURL: [Bool: NSImage] = [:]
+
+            func start() {}
+            func play() {}
+            func pause() {}
+            func nextTrack() {}
+            func close() {}
+            func artwork(for track: Track) async -> NSImage? {
+                if track.artworkURL == nil {
+                    await withCheckedContinuation { artworkGate = $0 }
+                }
+                return imagesByHasURL[track.artworkURL != nil]
+            }
+        }
+
+        var lyricsContinuation: CheckedContinuation<Lyrics?, Never>?
+        let expectedLyrics = try #require(Lyrics(lines: [
+            LyricLine(time: 0, text: "in-flight line"),
+            LyricLine(time: 15, text: "next line"),
+        ]))
+        let suspendedService = LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { _ in
+                    await withCheckedContinuation { lyricsContinuation = $0 }
+                },
+                netEaseMatch: { _ in nil },
+                lrcLibMatch: { _ in nil }
+            )
+        )
+
+        let source = SuspendedMockSource()
+        let upgradedImage = NSImage(size: NSSize(width: 24, height: 24))
+        source.imagesByHasURL[true] = upgradedImage
+        let model = PlaybackModel(sources: [source], lyricsService: suspendedService)
+        model.start()
+
+        let placeholder = Track(id: "200", title: "NetEase Music", artist: "", album: "", duration: 0, source: .netEase)
+        let fullTrack = Track(
+            id: "200",
+            title: "Full Song",
+            artist: "Singer",
+            album: "Album",
+            duration: 180,
+            source: .netEase,
+            artworkURL: URL(string: "https://example.com/cover.jpg")
+        )
+
+        // Start playback with placeholder while both lyrics and artwork tasks remain suspended.
+        source.state = PlaybackState(track: placeholder, isPlaying: true, position: 0)
+        await Task.yield()
+        #expect(model.lyricsStatus == .loading)
+
+        // Metadata upgrades mid-flight for the same (source, id) before lyrics or artwork resolves.
+        source.recentTrack = fullTrack
+        source.state = PlaybackState(track: fullTrack, isPlaying: true, position: 1)
+        await Task.yield()
+        #expect(model.artwork === upgradedImage)
+
+        // Resuming the original in-flight lyrics task must land `lyrics` instead of getting stuck `.loading`.
+        lyricsContinuation?.resume(returning: expectedLyrics)
+        lyricsContinuation = nil
+        source.artworkGate?.resume()
+        source.artworkGate = nil
+        await Task.yield()
+        await Task.yield()
+
+        #expect(model.lyrics == expectedLyrics)
+        #expect(model.lyricsStatus == .loaded)
+        #expect(model.artwork === upgradedImage)
+    }
+
     @Test func refreshesMainMenuTitlesWhenLanguageChanges() throws {
         let suiteName = "SoftLiveAppMenuL10nTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

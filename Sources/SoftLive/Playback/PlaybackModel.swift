@@ -24,7 +24,9 @@ final class PlaybackModel {
     @ObservationIgnored private var isDismissed = false
     @ObservationIgnored private let lyricsService: LyricsService
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
+    @ObservationIgnored private var lyricsTaskID: UUID?
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var artworkTaskID: UUID?
     @ObservationIgnored private var recentArtworkTasks: [PlayerKind: Task<Void, Never>] = [:]
     @ObservationIgnored private var lineTimer: Timer?
 
@@ -133,25 +135,33 @@ final class PlaybackModel {
             }
         }
 
+        let oldPlayback = playback
         let newPlayback = (isDismissed && activeSource?.state?.isPlaying != true) ? nil : activeSource?.state
-        let trackIdentityChanged = newPlayback?.track.id != playback?.track.id || newPlayback?.track.source != playback?.track.source
-        let trackChanged = newPlayback?.track != playback?.track
+        let trackIdentityChanged = !Self.sameIdentity(newPlayback?.track, oldPlayback?.track)
+        let trackChanged = newPlayback?.track != oldPlayback?.track
         playback = newPlayback
         if trackIdentityChanged {
             loadLyrics(for: newPlayback?.track)
             loadArtwork(for: newPlayback?.track)
             offset = 0 // Also re-syncs the current line.
         } else if trackChanged {
-            if lyrics == nil, lyricsTask == nil {
-                loadLyrics(for: newPlayback?.track)
-            }
-            if artwork == nil, artworkTask == nil {
-                loadArtwork(for: newPlayback?.track)
+            if let track = newPlayback?.track {
+                if lyrics == nil, lyricsTask == nil || track.netEaseSongID == nil {
+                    loadLyrics(for: track)
+                }
+                if artwork == nil, artworkTask == nil || (oldPlayback?.track.artworkURL == nil && track.artworkURL != nil) {
+                    loadArtwork(for: track)
+                }
             }
             syncCurrentLine()
         } else {
             syncCurrentLine()
         }
+    }
+
+    private static func sameIdentity(_ lhs: Track?, _ rhs: Track?) -> Bool {
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+        return lhs.id == rhs.id && lhs.source == rhs.source
     }
 
     private func updateRecentTrack(for source: any PlayerSource) {
@@ -172,7 +182,7 @@ final class PlaybackModel {
             }
             guard !Task.isCancelled, self.recentTracks[kind] == track else { return }
             self.recentArtworks[kind] = image
-            if self.playback?.track == track {
+            if self.playback?.track == track || (Self.sameIdentity(self.playback?.track, track) && self.artwork == nil && image != nil) {
                 self.artwork = image
             }
         }
@@ -181,16 +191,21 @@ final class PlaybackModel {
     private func loadLyrics(for track: Track?) {
         lyricsTask?.cancel()
         lyricsTask = nil
+        lyricsTaskID = nil
         lyrics = nil
         guard let track else {
             lyricsStatus = .idle
             return
         }
         lyricsStatus = .loading
+        let taskID = UUID()
+        lyricsTaskID = taskID
         lyricsTask = Task { [weak self, lyricsService] in
             let result = await lyricsService.lyrics(for: track)
-            guard let self, !Task.isCancelled, self.playback?.track == track else { return }
+            guard let self, !Task.isCancelled, self.lyricsTaskID == taskID else { return }
             self.lyricsTask = nil
+            self.lyricsTaskID = nil
+            guard Self.sameIdentity(self.playback?.track, track) else { return }
             self.lyrics = result
             self.lyricsStatus = result == nil ? .notFound : .loaded
             self.syncCurrentLine()
@@ -200,6 +215,7 @@ final class PlaybackModel {
     private func loadArtwork(for track: Track?) {
         artworkTask?.cancel()
         artworkTask = nil
+        artworkTaskID = nil
         artwork = nil
         guard let track, let source = activeSource else { return }
         if recentTracks[track.source] == track {
@@ -211,13 +227,17 @@ final class PlaybackModel {
                 return
             }
         }
+        let taskID = UUID()
+        artworkTaskID = taskID
         artworkTask = Task { [weak self, weak source] in
             guard let source else { return }
             let image = await source.artwork(for: track)
-            guard let self, !Task.isCancelled, self.playback?.track == track else { return }
+            guard let self, !Task.isCancelled, self.artworkTaskID == taskID else { return }
             self.artworkTask = nil
+            self.artworkTaskID = nil
+            guard Self.sameIdentity(self.playback?.track, track) else { return }
             self.artwork = image
-            if self.recentTracks[track.source] == track {
+            if Self.sameIdentity(self.recentTracks[track.source], track) {
                 self.recentArtworks[track.source] = image
             }
         }
