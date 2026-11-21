@@ -2,25 +2,6 @@ import AppKit
 import Darwin
 import Foundation
 
-nonisolated private final class LockedAppCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [InstalledAppTarget] = []
-
-    init() {}
-
-    func append(_ element: InstalledAppTarget) {
-        lock.lock()
-        storage.append(element)
-        lock.unlock()
-    }
-
-    var elements: [InstalledAppTarget] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage
-    }
-}
-
 /// Pre-indexed directory entries under `~/Library` so matching dozens of installed `.app` bundles
 /// performs only a single pass of directory listings.
 nonisolated struct UserLibraryIndex: Sendable {
@@ -60,6 +41,7 @@ nonisolated struct UserLibraryIndex: Sendable {
     }
 
     private static func listEntries(in directory: URL) -> [Entry] {
+        guard CleanRuleEngine.isDirectory(directory) else { return [] }
         let options: FileManager.DirectoryEnumerationOptions = [
             .skipsHiddenFiles,
             .skipsPackageDescendants,
@@ -83,34 +65,40 @@ nonisolated struct UserLibraryIndex: Sendable {
 /// Multi-level heuristic engine that discovers installed macOS applications and their associated `~/Library` files.
 nonisolated enum AppUninstallEngine {
     private static let genericAppNames: Set<String> = [
-        "app", "application", "client", "desktop", "helper", "launcher",
-        "mac", "macos", "player", "pro", "server", "service", "studio", "tool", "viewer"
+        "agent", "app", "application", "applications", "client", "daemon", "darwin",
+        "desktop", "electron", "extension", "helper", "launcher", "mac", "macos",
+        "macosx", "manager", "notifier", "osx", "player", "pro", "server", "service",
+        "studio", "tool", "updater", "viewer", "wrapper"
     ]
 
     /// Scans `/Applications` and `~/Applications` (or custom test directories) and resolves each app's `~/Library` leftovers.
     static func scanInstalledApps(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        applicationDirectories: [URL]? = nil
+        applicationDirectories: [URL]? = nil,
+        cancelToken: CleanCancellationToken? = nil
     ) -> [InstalledAppTarget] {
+        guard cancelToken?.isCancelled != true else { return [] }
         let stdHome = homeDirectory.standardizedFileURL
         let appDirs = applicationDirectories ?? [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             stdHome.appending(path: "Applications", directoryHint: .isDirectory)
         ]
 
-        let bundleURLs = discoverAppBundles(in: appDirs)
-        guard !bundleURLs.isEmpty else { return [] }
+        let bundleURLs = discoverAppBundles(in: appDirs, cancelToken: cancelToken)
+        guard !bundleURLs.isEmpty, cancelToken?.isCancelled != true else { return [] }
 
         let libraryIndex = UserLibraryIndex(homeDirectory: stdHome)
-        let collector = LockedAppCollector()
+        let collector = LockedCollector<InstalledAppTarget>()
 
         DispatchQueue.concurrentPerform(iterations: bundleURLs.count) { idx in
+            guard cancelToken?.isCancelled != true else { return }
             let bundleURL = bundleURLs[idx]
-            if let target = inspectApp(at: bundleURL, libraryIndex: libraryIndex) {
+            if let target = inspectApp(at: bundleURL, libraryIndex: libraryIndex, cancelToken: cancelToken) {
                 collector.append(target)
             }
         }
 
+        guard cancelToken?.isCancelled != true else { return [] }
         return collector.elements.sorted { lhs, rhs in
             if lhs.totalSizeBytes != rhs.totalSizeBytes {
                 return lhs.totalSizeBytes > rhs.totalSizeBytes
@@ -122,24 +110,32 @@ nonisolated enum AppUninstallEngine {
     /// Inspects a single `.app` bundle (e.g. dropped from Finder) and resolves all of its associated `~/Library` files.
     static func inspectApp(
         at appURL: URL,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        cancelToken: CleanCancellationToken? = nil
     ) -> InstalledAppTarget? {
         let libraryIndex = UserLibraryIndex(homeDirectory: homeDirectory)
-        return inspectApp(at: appURL, libraryIndex: libraryIndex)
+        return inspectApp(at: appURL, libraryIndex: libraryIndex, cancelToken: cancelToken)
     }
 
     static func inspectApp(
         at appURL: URL,
-        libraryIndex: UserLibraryIndex
+        libraryIndex: UserLibraryIndex,
+        cancelToken: CleanCancellationToken? = nil
     ) -> InstalledAppTarget? {
+        guard cancelToken?.isCancelled != true else { return nil }
         let stdURL = appURL.standardizedFileURL
-        guard stdURL.pathExtension.lowercased() == "app",
-              !CleanRuleEngine.isSymbolicLink(stdURL) else {
+        guard stdURL.isFileURL,
+              stdURL.pathExtension.lowercased() == "app",
+              CleanRuleEngine.isDirectory(stdURL) else {
             return nil
         }
 
-        let canonical = CleanRuleEngine.canonicalPath(stdURL)
-        if canonical.hasPrefix("/System/") || canonical.hasPrefix("/Library/Apple/") {
+        let resolvedPath = CleanRuleEngine.canonicalResolvedPath(stdURL)
+        if isProtectedSystemOrTrashPath(resolvedPath, homeDirectory: libraryIndex.homeDirectory) {
+            return nil
+        }
+
+        if resolvedPath == CleanRuleEngine.canonicalResolvedPath(Bundle.main.bundleURL) {
             return nil
         }
 
@@ -150,8 +146,18 @@ nonisolated enum AppUninstallEngine {
             return nil
         }
 
+        if let packageType = plist["CFBundlePackageType"] as? String,
+           !packageType.isEmpty,
+           packageType != "APPL" {
+            return nil
+        }
+        let macOSDir = stdURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory)
+        guard FileManager.default.fileExists(atPath: macOSDir.path(percentEncoded: false)) else {
+            return nil
+        }
+
         let lowerBundleID = rawBundleID.lowercased()
-        if lowerBundleID.hasPrefix("com.apple.") || lowerBundleID == "dev.softlive.softlive" {
+        if isProtectedBundleID(lowerBundleID) {
             return nil
         }
 
@@ -163,8 +169,8 @@ nonisolated enum AppUninstallEngine {
             ?? (plist["CFBundleVersion"] as? String)
             ?? "1.0"
 
-        let bundleMetrics = CleanRuleEngine.directoryMetrics(at: stdURL)
-        guard bundleMetrics.bytes > 0 else { return nil }
+        let bundleMetrics = CleanRuleEngine.directoryMetrics(at: stdURL, cancelToken: cancelToken)
+        guard cancelToken?.isCancelled != true, bundleMetrics.bytes > 0 else { return nil }
 
         let bundleResidual = AppResidualItem(
             url: stdURL,
@@ -179,8 +185,10 @@ nonisolated enum AppUninstallEngine {
             bundleID: lowerBundleID,
             displayName: displayName,
             bundleStem: bundleStem,
-            libraryIndex: libraryIndex
+            libraryIndex: libraryIndex,
+            cancelToken: cancelToken
         )
+        guard cancelToken?.isCancelled != true else { return nil }
 
         var allResiduals: [AppResidualItem] = [bundleResidual]
         allResiduals.append(contentsOf: associated)
@@ -201,38 +209,46 @@ nonisolated enum AppUninstallEngine {
         _ item: AppResidualItem,
         app: InstalledAppTarget,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        allowedApplicationDirectories: [URL]? = nil
+        allowedApplicationDirectories: [URL]? = nil,
+        allowRunning: Bool = false
     ) -> Bool {
         let fm = FileManager.default
         let targetPath = CleanRuleEngine.canonicalPath(item.url)
+        let resolvedTargetPath = CleanRuleEngine.canonicalResolvedPath(item.url)
         guard fm.fileExists(atPath: targetPath),
               !CleanRuleEngine.isSymbolicLink(item.url) else {
             return false
         }
 
-        if targetPath.hasPrefix("/System/") || targetPath.hasPrefix("/usr/") || targetPath.hasPrefix("/bin/") {
+        if isProtectedSystemOrTrashPath(targetPath, homeDirectory: homeDirectory)
+            || isProtectedSystemOrTrashPath(resolvedTargetPath, homeDirectory: homeDirectory) {
             return false
         }
 
         let lowerID = app.bundleID.lowercased()
-        if lowerID.hasPrefix("com.apple.") || lowerID == "dev.softlive.softlive" {
+        if isProtectedBundleID(lowerID) {
+            return false
+        }
+        if resolvedTargetPath == CleanRuleEngine.canonicalResolvedPath(Bundle.main.bundleURL) {
+            return false
+        }
+
+        if !allowRunning && !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).isEmpty {
             return false
         }
 
         if item.kind == .appBundle {
-            let appBundlePath = CleanRuleEngine.canonicalPath(app.bundleURL)
-            guard targetPath == appBundlePath && targetPath.lowercased().hasSuffix(".app") else {
+            let resolvedAppBundlePath = CleanRuleEngine.canonicalResolvedPath(app.bundleURL)
+            guard resolvedTargetPath == resolvedAppBundlePath && resolvedTargetPath.lowercased().hasSuffix(".app") else {
                 return false
             }
             if let allowedApplicationDirectories {
-                let allowedRoots = allowedApplicationDirectories.map(CleanRuleEngine.canonicalPath)
-                return allowedRoots.contains { root in
-                    targetPath.hasPrefix(root + "/") && targetPath != root
-                }
+                return CleanRuleEngine.isStrictDescendant(item.url, ofAnyRoot: allowedApplicationDirectories)
             }
             return true
         }
 
+        let stdHome = homeDirectory.standardizedFileURL
         let allowedLibraryDirs = [
             "Library/Application Support",
             "Library/Caches",
@@ -245,14 +261,34 @@ nonisolated enum AppUninstallEngine {
             "Library/Group Containers",
             "Library/LaunchAgents"
         ].map {
-            CleanRuleEngine.canonicalPath(
-                homeDirectory.standardizedFileURL.appending(path: $0, directoryHint: .isDirectory)
-            )
+            stdHome.appending(path: $0, directoryHint: .isDirectory)
         }
 
-        return allowedLibraryDirs.contains { root in
-            targetPath.hasPrefix(root + "/") && targetPath != root
+        return CleanRuleEngine.isStrictDescendant(item.url, ofAnyRoot: allowedLibraryDirs)
+    }
+
+    private static func isProtectedBundleID(_ lowerBundleID: String) -> Bool {
+        if lowerBundleID.hasPrefix("com.apple.") || lowerBundleID == "dev.softlive.softlive" {
+            return true
         }
+        if let mainID = Bundle.main.bundleIdentifier?.lowercased(), lowerBundleID == mainID {
+            return true
+        }
+        return false
+    }
+
+    private static func isProtectedSystemOrTrashPath(_ path: String, homeDirectory: URL) -> Bool {
+        if path == "/System" || path.hasPrefix("/System/")
+            || path == "/Library/Apple" || path.hasPrefix("/Library/Apple/")
+            || path == "/usr" || path.hasPrefix("/usr/")
+            || path == "/bin" || path.hasPrefix("/bin/")
+            || path == "/sbin" || path.hasPrefix("/sbin/") {
+            return true
+        }
+        let trashPath = CleanRuleEngine.canonicalResolvedPath(
+            homeDirectory.appending(path: ".Trash", directoryHint: .isDirectory)
+        )
+        return path == trashPath || path.hasPrefix(trashPath + "/")
     }
 
     // MARK: - Heuristic Residual Discovery
@@ -261,7 +297,8 @@ nonisolated enum AppUninstallEngine {
         bundleID: String,
         displayName: String,
         bundleStem: String,
-        libraryIndex: UserLibraryIndex
+        libraryIndex: UserLibraryIndex,
+        cancelToken: CleanCancellationToken? = nil
     ) -> [AppResidualItem] {
         var found: [AppResidualItem] = []
         var seenPaths = Set<String>()
@@ -273,10 +310,11 @@ nonisolated enum AppUninstallEngine {
             kind: AppResidualKind,
             tier: CleanSafetyTier
         ) {
+            guard cancelToken?.isCancelled != true else { return }
             let path = CleanRuleEngine.canonicalPath(entry.url)
             guard seenPaths.insert(path).inserted else { return }
-            let metrics = CleanRuleEngine.directoryMetrics(at: entry.url)
-            guard metrics.bytes > 0 else { return }
+            let metrics = CleanRuleEngine.directoryMetrics(at: entry.url, cancelToken: cancelToken)
+            guard cancelToken?.isCancelled != true, metrics.bytes > 0 else { return }
             found.append(
                 AppResidualItem(
                     url: entry.url,
@@ -291,6 +329,7 @@ nonisolated enum AppUninstallEngine {
 
         // 1. Application Support
         for entry in libraryIndex.appSupport {
+            guard cancelToken?.isCancelled != true else { return [] }
             if matchesBundleIDOrName(entry.lowerName, bundleID: bundleID, nameKeys: nameKeys) {
                 addEntry(entry, kind: .appSupport, tier: .safe)
             }
@@ -298,6 +337,7 @@ nonisolated enum AppUninstallEngine {
 
         // 2. Caches
         for entry in libraryIndex.caches {
+            guard cancelToken?.isCancelled != true else { return [] }
             if matchesBundleIDOrName(entry.lowerName, bundleID: bundleID, nameKeys: nameKeys) {
                 addEntry(entry, kind: .caches, tier: .safe)
             }
@@ -305,6 +345,7 @@ nonisolated enum AppUninstallEngine {
 
         // 3. Sandbox Containers
         for entry in libraryIndex.containers {
+            guard cancelToken?.isCancelled != true else { return [] }
             if matchesBundleIDPrefix(entry.lowerName, bundleID: bundleID) {
                 addEntry(entry, kind: .containers, tier: .safe)
             }
@@ -312,12 +353,14 @@ nonisolated enum AppUninstallEngine {
 
         // 4. Preferences & ByHost Preferences
         for entry in libraryIndex.preferences where entry.lowerName.hasSuffix(".plist") {
+            guard cancelToken?.isCancelled != true else { return [] }
             let stem = String(entry.lowerName.dropLast(".plist".count))
             if matchesBundleIDPrefix(stem, bundleID: bundleID) {
                 addEntry(entry, kind: .preferences, tier: .safe)
             }
         }
         for entry in libraryIndex.byHostPreferences where entry.lowerName.hasSuffix(".plist") {
+            guard cancelToken?.isCancelled != true else { return [] }
             if entry.lowerName.hasPrefix(bundleID + ".") {
                 addEntry(entry, kind: .preferences, tier: .safe)
             }
@@ -325,12 +368,14 @@ nonisolated enum AppUninstallEngine {
 
         // 5. Saved Application State, HTTPStorages, WebKit
         for entry in libraryIndex.savedStates where entry.lowerName.hasSuffix(".savedstate") {
+            guard cancelToken?.isCancelled != true else { return [] }
             let stem = String(entry.lowerName.dropLast(".savedstate".count))
             if matchesBundleIDPrefix(stem, bundleID: bundleID) {
                 addEntry(entry, kind: .stateAndWeb, tier: .safe)
             }
         }
         for entry in libraryIndex.httpStorages {
+            guard cancelToken?.isCancelled != true else { return [] }
             let stem = entry.lowerName.hasSuffix(".binarycookies")
                 ? String(entry.lowerName.dropLast(".binarycookies".count))
                 : entry.lowerName
@@ -339,6 +384,7 @@ nonisolated enum AppUninstallEngine {
             }
         }
         for entry in libraryIndex.webKit {
+            guard cancelToken?.isCancelled != true else { return [] }
             if matchesBundleIDPrefix(entry.lowerName, bundleID: bundleID) {
                 addEntry(entry, kind: .stateAndWeb, tier: .safe)
             }
@@ -346,6 +392,7 @@ nonisolated enum AppUninstallEngine {
 
         // 6. Logs
         for entry in libraryIndex.logs {
+            guard cancelToken?.isCancelled != true else { return [] }
             if matchesBundleIDOrName(entry.lowerName, bundleID: bundleID, nameKeys: nameKeys) {
                 addEntry(entry, kind: .logs, tier: .safe)
             }
@@ -353,11 +400,13 @@ nonisolated enum AppUninstallEngine {
 
         // 7. Group Containers & LaunchAgents (`.checkFirst` so shared vendor containers require manual review)
         for entry in libraryIndex.groupContainers {
-            if entry.lowerName.contains(bundleID) {
+            guard cancelToken?.isCancelled != true else { return [] }
+            if matchesBoundaryDelimitedBundleID(entry.lowerName, bundleID: bundleID) {
                 addEntry(entry, kind: .sharedAndAgents, tier: .checkFirst)
             }
         }
         for entry in libraryIndex.launchAgents where entry.lowerName.hasSuffix(".plist") {
+            guard cancelToken?.isCancelled != true else { return [] }
             let stem = String(entry.lowerName.dropLast(".plist".count))
             if matchesBundleIDPrefix(stem, bundleID: bundleID) {
                 addEntry(entry, kind: .sharedAndAgents, tier: .checkFirst)
@@ -378,6 +427,13 @@ nonisolated enum AppUninstallEngine {
             || candidate.hasPrefix(bundleID + "-")
     }
 
+    private static func matchesBoundaryDelimitedBundleID(_ candidate: String, bundleID: String) -> Bool {
+        candidate == bundleID
+            || candidate.hasSuffix("." + bundleID)
+            || candidate.hasPrefix(bundleID + ".")
+            || candidate.contains("." + bundleID + ".")
+    }
+
     private static func matchesBundleIDOrName(
         _ candidate: String,
         bundleID: String,
@@ -394,9 +450,15 @@ nonisolated enum AppUninstallEngine {
         if nameKeys.contains(compactCandidate) {
             return true
         }
+        // Require a word/delimiter boundary after `key` so short names like "Fork" or "Dash"
+        // never false-match unrelated apps like "ForkLift" or "Dashlane".
         for key in nameKeys where key.count >= 4 {
-            if compactCandidate.hasPrefix(key) {
-                return true
+            if candidate.hasPrefix(key), candidate.count > key.count {
+                let nextIndex = candidate.index(candidate.startIndex, offsetBy: key.count)
+                let nextChar = candidate[nextIndex]
+                if nextChar == " " || nextChar == "-" || nextChar == "_" || nextChar == "." || nextChar.isNumber {
+                    return true
+                }
             }
         }
         return false
@@ -427,14 +489,17 @@ nonisolated enum AppUninstallEngine {
                 if prev.count >= 4 && !genericAppNames.contains(prev) {
                     keys.insert(prev)
                 }
-            } else if last.count >= 4 {
+            } else if last.count >= 4 && !genericAppNames.contains(last) {
                 keys.insert(last)
             }
         }
         return keys
     }
 
-    private static func discoverAppBundles(in roots: [URL]) -> [URL] {
+    private static func discoverAppBundles(
+        in roots: [URL],
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [URL] {
         var urls: [URL] = []
         var seen = Set<String>()
         let fm = FileManager.default
@@ -445,13 +510,16 @@ nonisolated enum AppUninstallEngine {
         ]
 
         for root in roots {
-            guard let items = try? fm.contentsOfDirectory(
+            guard cancelToken?.isCancelled != true else { return [] }
+            guard !CleanRuleEngine.isSymbolicLink(root),
+                  let items = try? fm.contentsOfDirectory(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: options
             ) else { continue }
 
             for item in items where !CleanRuleEngine.isSymbolicLink(item) {
+                guard cancelToken?.isCancelled != true else { return [] }
                 if item.pathExtension.lowercased() == "app" {
                     let path = CleanRuleEngine.canonicalPath(item)
                     if seen.insert(path).inserted {

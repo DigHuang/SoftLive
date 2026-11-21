@@ -10,7 +10,10 @@ import Testing
         let tempHome = fm.temporaryDirectory
             .appending(path: "SoftLiveCleanHome-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tempHome) }
+        defer {
+            try? fm.removeItem(at: tempHome)
+            L10n.language = .system
+        }
 
         let now = Date(timeIntervalSince1970: 1_760_000_000)
         let tenDaysAgo = now.addingTimeInterval(-10 * 86_400)
@@ -58,6 +61,7 @@ import Testing
             withDestinationURL: pkgDir.appending(path: "index.js")
         )
         try setMTime(binDir, tenDaysAgo)
+        try setMTime(staleNodeModules.appending(path: ".bun"), tenDaysAgo)
         try setMTime(staleNodeModules, tenDaysAgo)
         try setMTime(staleProject, tenDaysAgo)
 
@@ -74,9 +78,11 @@ import Testing
         try Data(repeating: 0xAA, count: 256 * 1024).write(to: oldDMG)
         try setMTime(oldDMG, tenDaysAgo)
 
-        // - Orphaned app support folder (not in `installedBundleIDs` -> `.checkFirst` under `.leftoversAndInstallers`)
+        // - Orphaned app support folders (including `.cc` reverse-DNS TLD)
         let orphanSupport = tempHome.appending(path: "Library/Application Support/com.deleted.oldapp", directoryHint: .isDirectory)
         try writeSizedFile(in: orphanSupport, name: "state.db", bytes: 128 * 1024, mtime: tenDaysAgo)
+        let ccOrphanSupport = tempHome.appending(path: "Library/Application Support/cc.demo.client", directoryHint: .isDirectory)
+        try writeSizedFile(in: ccOrphanSupport, name: "prefs.db", bytes: 128 * 1024, mtime: tenDaysAgo)
 
         // - Installed app support folder (in `installedBundleIDs` -> must NOT be flagged as orphan!)
         let installedSupport = tempHome.appending(path: "Library/Application Support/com.spotify.client", directoryHint: .isDirectory)
@@ -102,20 +108,29 @@ import Testing
 
         cleaner.performSynchronousScan(environment: env)
 
-        // Verify discovered items
-        let titles = Set(cleaner.candidates.map(\.title))
-        #expect(titles.contains("Spotify (com.spotify.client)"))
-        #expect(!titles.contains(where: { $0.contains("163music") }))
-        #expect(!titles.contains(where: { $0.contains("LarkShell") }))
-        #expect(!titles.contains(where: { $0.contains("Safari") }))
-        #expect(titles.contains("Homebrew Cache"))
-        #expect(titles.contains("DerivedData · DemoApp"))
-        #expect(titles.contains("Xcode Archive · 2026-11-01"))
-        #expect(titles.contains("OldRepo · node_modules"))
-        #expect(!titles.contains("ActiveRepo · node_modules"))
-        #expect(titles.contains("InstallerOld.dmg"))
-        #expect(titles.contains("卸载残留 · Oldapp"))
-        #expect(!titles.contains(where: { $0.contains("卸载残留") && $0.contains("Spotify") }))
+        // Verify discovered items across both Chinese and English runtime languages (`displayTitle`)
+        preferences.language = .zhHans
+        let zhTitles = Set(cleaner.candidates.map(\.displayTitle))
+        #expect(zhTitles.contains("Spotify (com.spotify.client)"))
+        #expect(!zhTitles.contains(where: { $0.contains("163music") }))
+        #expect(!zhTitles.contains(where: { $0.contains("LarkShell") }))
+        #expect(!zhTitles.contains(where: { $0.contains("Safari") }))
+        #expect(zhTitles.contains("Homebrew 缓存"))
+        #expect(zhTitles.contains("DerivedData · DemoApp"))
+        #expect(zhTitles.contains("Xcode 归档 · 2026-11-01"))
+        #expect(zhTitles.contains("OldRepo · node_modules"))
+        #expect(!zhTitles.contains("ActiveRepo · node_modules"))
+        #expect(zhTitles.contains("InstallerOld.dmg"))
+        #expect(zhTitles.contains("卸载残留 · Oldapp"))
+        #expect(zhTitles.contains("卸载残留 · Demo (cc.demo.client)"))
+        #expect(!zhTitles.contains(where: { $0.contains("卸载残留") && $0.contains("Spotify") }))
+
+        preferences.language = .en
+        let enTitles = Set(cleaner.candidates.map(\.displayTitle))
+        #expect(enTitles.contains("Homebrew Cache"))
+        #expect(enTitles.contains("Xcode Archive · 2026-11-01"))
+        #expect(enTitles.contains("App Leftover · Oldapp"))
+        #expect(enTitles.contains("App Leftover · Demo (cc.demo.client)"))
 
         // Homebrew must only appear under `.devCaches`, never duplicated in `.appCaches`
         let appCacheItems = cleaner.candidates(for: .appCaches)
@@ -123,7 +138,7 @@ import Testing
         let devItems = cleaner.candidates(for: .devCaches)
         #expect(devItems.count == 3)
         let leftoverItems = cleaner.candidates(for: .leftoversAndInstallers)
-        #expect(leftoverItems.count == 2)
+        #expect(leftoverItems.count == 3)
 
         // Default selection must include `.safe` items and exclude `.checkFirst` items (`Archive` and `InstallerOld.dmg`)
         for candidate in cleaner.candidates {
@@ -294,7 +309,7 @@ import Testing
             now: now
         )
 
-        // Render idle state (Chinese) at minimum window size (680 x 636) to guarantee zero clipping
+        // Render idle state (Chinese) at minimum window size (740 x 640) to guarantee zero clipping
         preferences.language = .zhHans
         try assertCleanerPaneRenders(
             model: model,
@@ -327,6 +342,36 @@ import Testing
             preferences: preferences,
             state: state,
             size: NSSize(width: 900, height: 760)
+        )
+
+        // Render partial-trash failure banner (`skippedCount > 0`) at minimum window size across languages
+        struct MockTrashError: Error {}
+        var calls = 0
+        let partialReport = cleaner.trashSelected(environment: env) { url in
+            calls += 1
+            if calls == 1 {
+                throw MockTrashError()
+            }
+            try fm.removeItem(at: url)
+        }
+        #expect(partialReport.trashedCount >= 1)
+        #expect(partialReport.skippedCount == 1)
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.minWindowSize
+        )
+        preferences.language = .zhHans
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.minWindowSize
         )
 
         // Verify ControlCenterWindow strictly preserves its minimum size even after NSHostingView layout passes.
@@ -474,7 +519,7 @@ import Testing
         #expect(!fm.fileExists(atPath: acmeApp.path(percentEncoded: false)))
         #expect(cleaner.installedApps.isEmpty)
 
-        // Step C: Test Finder `.app` Drag & Drop (`handleDroppedAppURL`)
+        // Step C: Test Finder `.app` Drag & Drop (`handleDroppedAppURL`) and preservation across scans
         cleaner.mode = .junkClean
         let droppedApp = try createMockAppBundle(
             in: externalDir,
@@ -488,6 +533,228 @@ import Testing
         #expect(droppedAccepted)
         #expect(cleaner.mode == .appUninstall)
         #expect(cleaner.selectedApp?.displayName == "Dropped Tool")
+
+        cleaner.performSynchronousAppScan(homeDirectory: tempHome, applicationDirectories: [tempApps])
+        #expect(cleaner.installedApps.contains { $0.id == CleanRuleEngine.canonicalPath(droppedApp) })
+        #expect(cleaner.selectedApp?.displayName == "Dropped Tool")
+    }
+
+    @Test func skipsActiveMonorepoSubpackagesFreshArtifactsAndGitWorktreeActivity() throws {
+        let fm = FileManager.default
+        let tempHome = fm.temporaryDirectory
+            .appending(path: "SoftLiveMonorepoTest-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempHome) }
+
+        let now = Date(timeIntervalSince1970: 1_760_000_000)
+        let tenDaysAgo = now.addingTimeInterval(-10 * 86_400)
+        let twoDaysAgo = now.addingTimeInterval(-2 * 86_400)
+
+        // Monorepo with an older Git index/HEAD (> 7 days), one actively modified subpackage, and one stale subpackage.
+        let monoRepo = tempHome.appending(path: "Documents/GitHub/MonoRepo", directoryHint: .isDirectory)
+        try writeSizedFile(in: monoRepo.appending(path: ".git", directoryHint: .isDirectory), name: "index", bytes: 4096, mtime: tenDaysAgo)
+        try writeSizedFile(in: monoRepo.appending(path: ".git", directoryHint: .isDirectory), name: "HEAD", bytes: 32, mtime: tenDaysAgo)
+
+        let activeWeb = monoRepo.appending(path: "packages/web", directoryHint: .isDirectory)
+        try writeSizedFile(in: activeWeb.appending(path: "node_modules", directoryHint: .isDirectory), name: "react.js", bytes: 128 * 1024, mtime: twoDaysAgo)
+        try writeSizedFile(in: activeWeb, name: "package.json", bytes: 1024, mtime: twoDaysAgo)
+
+        let staleLegacy = monoRepo.appending(path: "packages/legacy", directoryHint: .isDirectory)
+        try writeSizedFile(in: staleLegacy.appending(path: "node_modules", directoryHint: .isDirectory), name: "old.js", bytes: 128 * 1024, mtime: tenDaysAgo)
+        try setMTime(staleLegacy, tenDaysAgo)
+        try setMTime(monoRepo.appending(path: "packages", directoryHint: .isDirectory), tenDaysAgo)
+        try setMTime(monoRepo, tenDaysAgo)
+
+        // Git worktree with `.git` file (`gitdir: ...`) whose external `logs/HEAD` was updated recently.
+        let externalGitDir = tempHome.appending(path: "GitMeta/worktree-1", directoryHint: .isDirectory)
+        try writeSizedFile(in: externalGitDir.appending(path: "logs", directoryHint: .isDirectory), name: "HEAD", bytes: 256, mtime: twoDaysAgo)
+        let worktreeRepo = tempHome.appending(path: "Documents/GitHub/WorktreeRepo", directoryHint: .isDirectory)
+        try fm.createDirectory(at: worktreeRepo, withIntermediateDirectories: true)
+        let dotGitFile = worktreeRepo.appending(path: ".git")
+        try "gitdir: \(externalGitDir.path(percentEncoded: false))\n".write(to: dotGitFile, atomically: true, encoding: .utf8)
+        try writeSizedFile(in: worktreeRepo.appending(path: ".build", directoryHint: .isDirectory), name: "app.o", bytes: 128 * 1024, mtime: tenDaysAgo)
+        try setMTime(dotGitFile, tenDaysAgo)
+        try setMTime(worktreeRepo, tenDaysAgo)
+
+        let env = CleanEnvironment(
+            homeDirectory: tempHome,
+            runningBundleIDs: [],
+            runningProcessNames: [],
+            installedBundleIDs: [],
+            excludedPaths: [],
+            staleDays: 7,
+            minimumCacheEntryBytes: 1024,
+            minimumInstallerBytes: 64 * 1024,
+            now: now
+        )
+
+        let results = CleanRuleEngine.scan(environment: env)
+        let titles = Set(results.map(\.title))
+        #expect(!titles.contains("MonoRepo/web · node_modules"))
+        #expect(!titles.contains("WorktreeRepo · .build"))
+        #expect(titles.contains("MonoRepo/legacy · node_modules"))
+    }
+
+    @Test func blocksSymlinkAncestorsInvalidAppsTrashAndAllowsDownloadsWhileRunning() throws {
+        let fm = FileManager.default
+        let tempRoot = fm.temporaryDirectory
+            .appending(path: "SoftLiveSecurityTest-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let tempHome = tempRoot.appending(path: "Home", directoryHint: .isDirectory)
+        let outsideDir = tempRoot.appending(path: "Outside", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        try fm.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempRoot) }
+
+        // 1. Ancestor symlink escape under ~/Library/Caches
+        let subOutside = outsideDir.appending(path: "SubCache", directoryHint: .isDirectory)
+        try writeSizedFile(in: subOutside, name: "secret.dat", bytes: 64 * 1024, mtime: .now)
+        let cachesDir = tempHome.appending(path: "Library/Caches", directoryHint: .isDirectory)
+        try fm.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+        let evilParentLink = cachesDir.appending(path: "EvilParent")
+        try fm.createSymbolicLink(at: evilParentLink, withDestinationURL: outsideDir)
+
+        let forgedDescendant = CleanCandidate(
+            url: evilParentLink.appending(path: "SubCache", directoryHint: .isDirectory),
+            category: .appCaches,
+            title: "Evil",
+            subtitle: "~/Library/Caches/EvilParent/SubCache",
+            sizeBytes: 64 * 1024,
+            safetyTier: .safe
+        )
+        let env = CleanEnvironment(
+            homeDirectory: tempHome,
+            runningBundleIDs: ["com.google.chrome"],
+            runningProcessNames: ["Google Chrome"],
+            excludedPaths: [],
+            staleDays: 7,
+            minimumCacheEntryBytes: 1024,
+            minimumInstallerBytes: 1024
+        )
+        #expect(!CleanRuleEngine.canSafelyTrash(forgedDescendant, environment: env))
+
+        // 2. Downloads installer matching a running app must remain trashable when scanned as `.leftoversAndInstallers`
+        let downloadsDir = tempHome.appending(path: "Downloads", directoryHint: .isDirectory)
+        let chromeDMG = downloadsDir.appending(path: "GoogleChrome.dmg")
+        try writeSizedFile(in: downloadsDir, name: "GoogleChrome.dmg", bytes: 128 * 1024, mtime: Date.now.addingTimeInterval(-10 * 86_400))
+        let dmgCandidate = CleanCandidate(
+            url: chromeDMG,
+            category: .leftoversAndInstallers,
+            title: "GoogleChrome.dmg",
+            subtitle: "~/Downloads/GoogleChrome.dmg",
+            sizeBytes: 128 * 1024,
+            safetyTier: .checkFirst
+        )
+        #expect(CleanRuleEngine.canSafelyTrash(dmgCandidate, environment: env))
+
+        // 3. Invalid .app bundles, SoftLive itself, and bundles inside ~/.Trash must be rejected
+        let fakeFileApp = outsideDir.appending(path: "FakeFile.app")
+        try Data(repeating: 0x11, count: 8192).write(to: fakeFileApp)
+        #expect(AppUninstallEngine.inspectApp(at: fakeFileApp, homeDirectory: tempHome) == nil)
+
+        let noMacOSApp = outsideDir.appending(path: "NoMacOS.app", directoryHint: .isDirectory)
+        let noMacOSContents = noMacOSApp.appending(path: "Contents", directoryHint: .isDirectory)
+        try fm.createDirectory(at: noMacOSContents, withIntermediateDirectories: true)
+        try (["CFBundleIdentifier": "com.fake.nomacos"] as NSDictionary).write(to: noMacOSContents.appending(path: "Info.plist"))
+        #expect(AppUninstallEngine.inspectApp(at: noMacOSApp, homeDirectory: tempHome) == nil)
+
+        let selfApp = try createMockAppBundle(
+            in: outsideDir,
+            bundleName: "SoftLive.app",
+            bundleID: "dev.softlive.SoftLive",
+            displayName: "SoftLive",
+            version: "0.0.2",
+            binaryBytes: 32 * 1024
+        )
+        #expect(AppUninstallEngine.inspectApp(at: selfApp, homeDirectory: tempHome) == nil)
+
+        let trashDir = tempHome.appending(path: ".Trash", directoryHint: .isDirectory)
+        let trashedApp = try createMockAppBundle(
+            in: trashDir,
+            bundleName: "AlreadyTrashed.app",
+            bundleID: "com.old.trashed",
+            displayName: "AlreadyTrashed",
+            version: "1.0",
+            binaryBytes: 32 * 1024
+        )
+        #expect(AppUninstallEngine.inspectApp(at: trashedApp, homeDirectory: tempHome) == nil)
+    }
+
+    @Test func avoidsShortNamePrefixFalsePositivesInAppResiduals() throws {
+        let fm = FileManager.default
+        let tempRoot = fm.temporaryDirectory
+            .appending(path: "SoftLiveResidualMatch-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let tempHome = tempRoot.appending(path: "Home", directoryHint: .isDirectory)
+        let tempApps = tempRoot.appending(path: "Applications", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        try fm.createDirectory(at: tempApps, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempRoot) }
+
+        let forkApp = try createMockAppBundle(
+            in: tempApps,
+            bundleName: "Fork.app",
+            bundleID: "com.DanPristupov.Fork",
+            displayName: "Fork",
+            version: "2.40",
+            binaryBytes: 64 * 1024
+        )
+        try writeSizedFile(in: tempHome.appending(path: "Library/Application Support/Fork", directoryHint: .isDirectory), name: "repos.json", bytes: 16 * 1024, mtime: .now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Caches/Fork-Updater", directoryHint: .isDirectory), name: "update.zip", bytes: 16 * 1024, mtime: .now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Application Support/ForkLift", directoryHint: .isDirectory), name: "workspaces.db", bytes: 64 * 1024, mtime: .now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Group Containers/group.com.DanPristupov.Fork.shared", directoryHint: .isDirectory), name: "g.db", bytes: 8192, mtime: .now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Group Containers/group.com.DanPristupov.Fork2", directoryHint: .isDirectory), name: "g2.db", bytes: 8192, mtime: .now)
+
+        let target = try #require(AppUninstallEngine.inspectApp(at: forkApp, homeDirectory: tempHome))
+        let residualTitles = Set(target.residuals.map(\.title))
+        #expect(residualTitles.contains("Fork"))
+        #expect(residualTitles.contains("Fork-Updater"))
+        #expect(!residualTitles.contains("ForkLift"))
+        #expect(residualTitles.contains("group.com.DanPristupov.Fork.shared"))
+        #expect(!residualTitles.contains("group.com.DanPristupov.Fork2"))
+    }
+
+    @Test func cancelsInFlightScanAndDoesNotOvercountSparseFiles() throws {
+        let fm = FileManager.default
+        let tempHome = fm.temporaryDirectory
+            .appending(path: "SoftLiveCancelSparse-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.createDirectory(at: tempHome, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempHome) }
+
+        // 1. Sparse file with 0 allocated blocks must report 0 physical bytes, not logical st_size.
+        let sparseDir = tempHome.appending(path: "Library/Caches/com.sparse.test", directoryHint: .isDirectory)
+        try fm.createDirectory(at: sparseDir, withIntermediateDirectories: true)
+        let sparseFile = sparseDir.appending(path: "sparse.img")
+        fm.createFile(atPath: sparseFile.path(percentEncoded: false), contents: nil)
+        let fh = try FileHandle(forWritingTo: sparseFile)
+        try fh.truncate(atOffset: 2 * 1_048_576)
+        try fh.close()
+        let sparseMetrics = CleanRuleEngine.directoryMetrics(at: sparseDir)
+        #expect(sparseMetrics.bytes == 0)
+
+        // 2. Real non-empty file respects cancellation token immediately.
+        try writeSizedFile(in: sparseDir, name: "real.bin", bytes: 64 * 1024, mtime: .now)
+        let cancelToken = CleanCancellationToken()
+        cancelToken.cancel()
+        #expect(CleanRuleEngine.directoryMetrics(at: sparseDir, cancelToken: cancelToken).bytes == 0)
+
+        let env = CleanEnvironment(
+            homeDirectory: tempHome,
+            runningBundleIDs: [],
+            runningProcessNames: [],
+            excludedPaths: [],
+            minimumCacheEntryBytes: 1024
+        )
+        #expect(CleanRuleEngine.scan(environment: env, cancelToken: cancelToken).isEmpty)
+        #expect(AppUninstallEngine.scanInstalledApps(homeDirectory: tempHome, applicationDirectories: [tempHome], cancelToken: cancelToken).isEmpty)
+
+        // 3. DiskCleaner.cancelInFlightScan resets active scan state cleanly.
+        let suiteName = "SoftLiveCancelSuite.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cleaner = DiskCleaner(preferences: Preferences(defaults: defaults))
+        cleaner.scan()
+        cleaner.cancelInFlightScan()
+        #expect(!cleaner.isScanning)
+        #expect(!cleaner.isScanningApps)
     }
 
     private func assertCleanerPaneRenders(

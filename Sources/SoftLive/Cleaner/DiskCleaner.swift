@@ -21,17 +21,25 @@ final class DiskCleaner {
     // MARK: - App Uninstaller State
 
     private(set) var isScanningApps = false
+    private(set) var isInspectingDrop = false
     private(set) var installedApps: [InstalledAppTarget] = []
+    private(set) var runningBundleIDs: Set<String> = []
     private(set) var selectedAppID: String?
     private(set) var selectedResidualIDs: Set<String> = []
     private(set) var lastAppScanDate: Date?
     private(set) var lastUninstallReport: CleanSummaryReport?
+    private(set) var dropErrorMessage: String?
 
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private var scanTask: Task<Void, Never>?
+    @ObservationIgnored private var scanCancelToken: CleanCancellationToken?
     @ObservationIgnored private var scanGeneration: UInt64 = 0
     @ObservationIgnored private var appScanTask: Task<Void, Never>?
+    @ObservationIgnored private var appScanCancelToken: CleanCancellationToken?
     @ObservationIgnored private var appScanGeneration: UInt64 = 0
+    @ObservationIgnored private var dropInspectTask: Task<Void, Never>?
+    @ObservationIgnored private var trashTask: Task<Void, Never>?
+    @ObservationIgnored private var droppedAppTargets: [String: InstalledAppTarget] = [:]
     @ObservationIgnored private var appIconCache: [String: NSImage] = [:]
 
     init(preferences: Preferences) {
@@ -41,11 +49,16 @@ final class DiskCleaner {
            let initialMode = CleanerMode(rawValue: rawMode) {
             self.mode = initialMode
         }
+        refreshRunningApps()
     }
 
     isolated deinit {
+        scanCancelToken?.cancel()
         scanTask?.cancel()
+        appScanCancelToken?.cancel()
         appScanTask?.cancel()
+        dropInspectTask?.cancel()
+        trashTask?.cancel()
     }
 
     // MARK: - Junk & Cache Derived Metrics
@@ -105,6 +118,7 @@ final class DiskCleaner {
     func toggleCategory(_ category: CleanCategory) {
         let items = candidates(for: category)
         guard !items.isEmpty else { return }
+        lastReport = nil
         let anySelected = items.contains { selectedIDs.contains($0.id) }
         if anySelected {
             for item in items {
@@ -120,6 +134,7 @@ final class DiskCleaner {
     }
 
     func toggleCandidate(_ id: String) {
+        lastReport = nil
         if selectedIDs.contains(id) {
             selectedIDs.remove(id)
         } else {
@@ -128,6 +143,7 @@ final class DiskCleaner {
     }
 
     func selectSafeDefaults() {
+        lastReport = nil
         selectedIDs = Set(
             candidates
                 .filter { $0.safetyTier.defaultSelected }
@@ -136,6 +152,7 @@ final class DiskCleaner {
     }
 
     func deselectAll() {
+        lastReport = nil
         selectedIDs.removeAll()
     }
 
@@ -186,6 +203,7 @@ final class DiskCleaner {
     }
 
     func toggleResidual(_ id: String) {
+        lastUninstallReport = nil
         if selectedResidualIDs.contains(id) {
             selectedResidualIDs.remove(id)
         } else {
@@ -195,6 +213,7 @@ final class DiskCleaner {
 
     func selectAllSafeAppResiduals() {
         guard let app = selectedApp else { return }
+        lastUninstallReport = nil
         selectedResidualIDs = Set(
             app.residuals
                 .filter { $0.safetyTier.defaultSelected }
@@ -205,6 +224,7 @@ final class DiskCleaner {
     /// Unchecks the `.app` bundle itself and selects only `~/Library` safe residuals ("重置应用数据 / Reset App Data").
     func selectAppResidualsOnly() {
         guard let app = selectedApp else { return }
+        lastUninstallReport = nil
         selectedResidualIDs = Set(
             app.residuals
                 .filter { $0.kind != .appBundle && $0.safetyTier.defaultSelected }
@@ -213,14 +233,26 @@ final class DiskCleaner {
     }
 
     func deselectAllAppResiduals() {
+        lastUninstallReport = nil
         selectedResidualIDs.removeAll()
     }
 
-    func isAppRunning(_ app: InstalledAppTarget) -> Bool {
-        let lowerID = app.bundleID.lowercased()
-        return NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier?.lowercased() == lowerID
+    func refreshRunningApps() {
+        let updated = Set(
+            NSWorkspace.shared.runningApplications
+                .compactMap { $0.bundleIdentifier?.lowercased() }
+        )
+        if runningBundleIDs != updated {
+            runningBundleIDs = updated
         }
+    }
+
+    func clearDropError() {
+        dropErrorMessage = nil
+    }
+
+    func isAppRunning(_ app: InstalledAppTarget) -> Bool {
+        runningBundleIDs.contains(app.bundleID.lowercased())
     }
 
     func icon(for app: InstalledAppTarget) -> NSImage {
@@ -240,21 +272,33 @@ final class DiskCleaner {
 
     /// Starts an asynchronous allowlist scan on a background thread.
     func scan() {
+        scanCancelToken?.cancel()
         scanTask?.cancel()
         scanTask = nil
         scanGeneration &+= 1
         let currentGen = scanGeneration
+        let cancelToken = CleanCancellationToken()
+        scanCancelToken = cancelToken
 
         isScanning = true
         lastReport = nil
-        refreshDiskSpace()
 
-        let environment = CleanEnvironment(staleDays: preferences.cleanStaleThreshold.rawValue)
+        let staleDays = preferences.cleanStaleThreshold.rawValue
+        let runningSnapshot = RunningAppsSnapshot.current()
         scanTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let discovered = CleanRuleEngine.scan(environment: environment)
+            let space = DiskSpaceSummary.current()
+            guard !cancelToken.isCancelled else { return }
+            let environment = CleanEnvironment(
+                staleDays: staleDays,
+                runningSnapshot: runningSnapshot
+            )
+            let discovered = CleanRuleEngine.scan(environment: environment, cancelToken: cancelToken)
+            guard !cancelToken.isCancelled else { return }
             await MainActor.run {
-                guard let self, self.scanGeneration == currentGen else { return }
+                guard let self, self.scanGeneration == currentGen, !cancelToken.isCancelled else { return }
                 self.scanTask = nil
+                self.scanCancelToken = nil
+                self.diskSpace = space
                 self.applyScanResults(discovered)
             }
         }
@@ -262,11 +306,16 @@ final class DiskCleaner {
 
     /// Synchronous scan entry point for deterministic unit tests.
     func performSynchronousScan(environment: CleanEnvironment? = nil) {
+        scanCancelToken?.cancel()
+        scanCancelToken = nil
         scanTask?.cancel()
         scanTask = nil
         scanGeneration &+= 1
         lastReport = nil
-        let env = environment ?? CleanEnvironment(staleDays: preferences.cleanStaleThreshold.rawValue)
+        let env = environment ?? CleanEnvironment(
+            staleDays: preferences.cleanStaleThreshold.rawValue,
+            runningSnapshot: RunningAppsSnapshot.current()
+        )
         let discovered = CleanRuleEngine.scan(environment: env)
         applyScanResults(discovered)
     }
@@ -282,6 +331,34 @@ final class DiskCleaner {
         isScanning = false
     }
 
+    /// Moves selected junk candidates to the macOS Trash asynchronously off MainActor.
+    func trashSelectedAsync() {
+        guard !isCleaning, !isScanning else { return }
+        let chosen = candidates.filter { selectedIDs.contains($0.id) }
+        guard !chosen.isEmpty else { return }
+
+        isCleaning = true
+        lastReport = nil
+        let staleDays = preferences.cleanStaleThreshold.rawValue
+        let runningSnapshot = RunningAppsSnapshot.current()
+
+        trashTask?.cancel()
+        trashTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let env = CleanEnvironment(
+                staleDays: staleDays,
+                runningSnapshot: runningSnapshot
+            )
+            let outcome = Self.performTrashCandidates(chosen, environment: env, trashHandler: nil)
+            let space = DiskSpaceSummary.current()
+            await MainActor.run {
+                guard let self else { return }
+                self.trashTask = nil
+                self.applyTrashCandidatesOutcome(outcome, diskSpace: space)
+                self.isCleaning = false
+            }
+        }
+    }
+
     /// Moves all currently selected candidates to the macOS Trash after re-verifying safety invariants.
     @discardableResult
     func trashSelected(
@@ -294,15 +371,26 @@ final class DiskCleaner {
         isCleaning = true
         defer { isCleaning = false }
 
-        let env = environment ?? CleanEnvironment(staleDays: preferences.cleanStaleThreshold.rawValue)
+        let env = environment ?? CleanEnvironment(
+            staleDays: preferences.cleanStaleThreshold.rawValue,
+            runningSnapshot: RunningAppsSnapshot.current()
+        )
         let chosen = candidates.filter { selectedIDs.contains($0.id) }
+        let outcome = Self.performTrashCandidates(chosen, environment: env, trashHandler: trashHandler)
+        return applyTrashCandidatesOutcome(outcome, diskSpace: DiskSpaceSummary.current())
+    }
 
+    nonisolated private static func performTrashCandidates(
+        _ chosen: [CleanCandidate],
+        environment: CleanEnvironment,
+        trashHandler: ((URL) throws -> Void)?
+    ) -> (trashedIDs: Set<String>, freedBytes: UInt64, skippedCount: Int) {
         var trashedIDs: Set<String> = []
         var freedBytes: UInt64 = 0
         var skippedCount = 0
 
         for item in chosen {
-            guard CleanRuleEngine.canSafelyTrash(item, environment: env) else {
+            guard CleanRuleEngine.canSafelyTrash(item, environment: environment) else {
                 skippedCount += 1
                 continue
             }
@@ -319,16 +407,24 @@ final class DiskCleaner {
             }
         }
 
-        if !trashedIDs.isEmpty {
-            candidates.removeAll { trashedIDs.contains($0.id) }
-            selectedIDs.subtract(trashedIDs)
+        return (trashedIDs, freedBytes, skippedCount)
+    }
+
+    @discardableResult
+    private func applyTrashCandidatesOutcome(
+        _ outcome: (trashedIDs: Set<String>, freedBytes: UInt64, skippedCount: Int),
+        diskSpace newSpace: DiskSpaceSummary
+    ) -> CleanSummaryReport {
+        if !outcome.trashedIDs.isEmpty {
+            candidates.removeAll { outcome.trashedIDs.contains($0.id) }
+            selectedIDs.subtract(outcome.trashedIDs)
         }
-        refreshDiskSpace()
+        diskSpace = newSpace
 
         let report = CleanSummaryReport(
-            trashedCount: trashedIDs.count,
-            freedBytes: freedBytes,
-            skippedCount: skippedCount,
+            trashedCount: outcome.trashedIDs.count,
+            freedBytes: outcome.freedBytes,
+            skippedCount: outcome.skippedCount,
             completedAt: .now
         )
         lastReport = report
@@ -338,20 +434,28 @@ final class DiskCleaner {
     // MARK: - App Uninstaller Scanning, Drop & Trashing
 
     func scanApps() {
+        appScanCancelToken?.cancel()
         appScanTask?.cancel()
         appScanTask = nil
         appScanGeneration &+= 1
         let currentGen = appScanGeneration
+        let cancelToken = CleanCancellationToken()
+        appScanCancelToken = cancelToken
 
         isScanningApps = true
         lastUninstallReport = nil
-        refreshDiskSpace()
 
         appScanTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let apps = AppUninstallEngine.scanInstalledApps()
+            let space = DiskSpaceSummary.current()
+            guard !cancelToken.isCancelled else { return }
+            let apps = AppUninstallEngine.scanInstalledApps(cancelToken: cancelToken)
+            guard !cancelToken.isCancelled else { return }
             await MainActor.run {
-                guard let self, self.appScanGeneration == currentGen else { return }
+                guard let self, self.appScanGeneration == currentGen, !cancelToken.isCancelled else { return }
                 self.appScanTask = nil
+                self.appScanCancelToken = nil
+                self.diskSpace = space
+                self.refreshRunningApps()
                 self.applyAppScanResults(apps)
             }
         }
@@ -362,10 +466,13 @@ final class DiskCleaner {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         applicationDirectories: [URL]? = nil
     ) {
+        appScanCancelToken?.cancel()
+        appScanCancelToken = nil
         appScanTask?.cancel()
         appScanTask = nil
         appScanGeneration &+= 1
         lastUninstallReport = nil
+        refreshRunningApps()
         let apps = AppUninstallEngine.scanInstalledApps(
             homeDirectory: homeDirectory,
             applicationDirectories: applicationDirectories
@@ -374,11 +481,25 @@ final class DiskCleaner {
     }
 
     private func applyAppScanResults(_ apps: [InstalledAppTarget]) {
-        installedApps = apps
+        let scannedIDs = Set(apps.map(\.id))
+        var merged = apps
+        // Preserve valid externally dropped `.app` bundles (e.g. Desktop/Downloads) across scans.
+        for (id, dropped) in droppedAppTargets {
+            if scannedIDs.contains(id) {
+                droppedAppTargets.removeValue(forKey: id)
+            } else if FileManager.default.fileExists(atPath: dropped.bundleURL.path(percentEncoded: false)) {
+                merged.insert(dropped, at: 0)
+            } else {
+                droppedAppTargets.removeValue(forKey: id)
+            }
+        }
+        installedApps = merged
+        appIconCache = appIconCache.filter { key, _ in merged.contains { $0.id == key } }
+
         if let currentID = selectedAppID,
-           let stillPresent = apps.first(where: { $0.id == currentID }) {
+           let stillPresent = merged.first(where: { $0.id == currentID }) {
             selectApp(stillPresent.id)
-        } else if let first = apps.first {
+        } else if let first = merged.first {
             selectApp(first.id)
         } else {
             selectedAppID = nil
@@ -388,18 +509,61 @@ final class DiskCleaner {
         isScanningApps = false
     }
 
-    /// Handles a `.app` bundle dropped from Finder onto the Cleaner window:
-    /// switches to `.appUninstall` mode, inspects the `.app` and its `~/Library` files, and selects it.
+    /// Inspects a `.app` bundle dropped from Finder off MainActor and surfaces explicit feedback if rejected.
+    func inspectDroppedAppURL(
+        _ url: URL,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) {
+        dropInspectTask?.cancel()
+        dropErrorMessage = nil
+        let stdURL = url.standardizedFileURL
+        guard stdURL.isFileURL, stdURL.pathExtension.lowercased() == "app" else {
+            dropErrorMessage = L10n.tr(
+                "仅支持拖入有效的 .app 应用程序包",
+                "Only valid .app application bundles can be inspected"
+            )
+            return
+        }
+
+        isInspectingDrop = true
+        dropInspectTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let target = AppUninstallEngine.inspectApp(at: stdURL, homeDirectory: homeDirectory)
+            await MainActor.run {
+                guard let self, !Task.isCancelled else { return }
+                self.dropInspectTask = nil
+                self.isInspectingDrop = false
+                guard let target else {
+                    self.dropErrorMessage = L10n.tr(
+                        "无法移除系统应用、SoftLive 本身或无效安装包",
+                        "System apps, SoftLive itself, and invalid bundles are protected"
+                    )
+                    return
+                }
+                self.applyDroppedTarget(target)
+            }
+        }
+    }
+
+    /// Synchronous `.app` drop inspection entry point for deterministic unit tests.
     @discardableResult
     func handleDroppedAppURL(
         _ url: URL,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> Bool {
         let stdURL = url.standardizedFileURL
-        guard stdURL.pathExtension.lowercased() == "app",
+        guard stdURL.isFileURL,
+              stdURL.pathExtension.lowercased() == "app",
               let target = AppUninstallEngine.inspectApp(at: stdURL, homeDirectory: homeDirectory) else {
             return false
         }
+        applyDroppedTarget(target)
+        return true
+    }
+
+    private func applyDroppedTarget(_ target: InstalledAppTarget) {
+        dropErrorMessage = nil
+        refreshRunningApps()
+        droppedAppTargets[target.id] = target
         mode = .appUninstall
         if let existingIdx = installedApps.firstIndex(where: { $0.id == target.id }) {
             installedApps[existingIdx] = target
@@ -407,7 +571,48 @@ final class DiskCleaner {
             installedApps.insert(target, at: 0)
         }
         selectApp(target.id)
-        return true
+    }
+
+    /// Moves the currently selected items of `selectedApp` to the macOS Trash asynchronously off MainActor.
+    func trashSelectedAppItemsAsync(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        allowedApplicationDirectories: [URL]? = nil
+    ) {
+        guard !isCleaning, !isScanningApps, let app = selectedApp else { return }
+        let chosen = Self.orderedResidualsToTrash(app: app, selectedResidualIDs: selectedResidualIDs)
+        guard !chosen.isEmpty else { return }
+
+        isCleaning = true
+        lastUninstallReport = nil
+        let shouldTerminate = isAppRunning(app)
+        if shouldTerminate {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID)
+            for proc in running {
+                _ = proc.terminate()
+            }
+        }
+
+        trashTask?.cancel()
+        trashTask = Task.detached(priority: .userInitiated) { [weak self] in
+            if shouldTerminate {
+                await Self.waitForAppTermination(bundleID: app.bundleID)
+            }
+            let outcome = Self.performTrashAppItems(
+                chosen,
+                app: app,
+                homeDirectory: homeDirectory,
+                allowedApplicationDirectories: allowedApplicationDirectories,
+                trashHandler: nil
+            )
+            let space = DiskSpaceSummary.current()
+            await MainActor.run {
+                guard let self else { return }
+                self.trashTask = nil
+                self.refreshRunningApps()
+                self.applyTrashAppItemsOutcome(outcome, app: app, diskSpace: space)
+                self.isCleaning = false
+            }
+        }
     }
 
     /// Moves the currently selected items of `selectedApp` to the macOS Trash.
@@ -431,17 +636,57 @@ final class DiskCleaner {
             for proc in running {
                 _ = proc.terminate()
             }
+            let deadline = Date.now.addingTimeInterval(2.0)
+            while !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).isEmpty,
+                  Date.now < deadline {
+                RunLoop.current.run(mode: .default, before: Date.now.addingTimeInterval(0.05))
+            }
         }
 
-        // Trash `~/Library` residuals first, and the `.app` bundle last.
-        let chosen = app.residuals
+        let chosen = Self.orderedResidualsToTrash(app: app, selectedResidualIDs: selectedResidualIDs)
+        let outcome = Self.performTrashAppItems(
+            chosen,
+            app: app,
+            homeDirectory: homeDirectory,
+            allowedApplicationDirectories: allowedApplicationDirectories,
+            trashHandler: trashHandler
+        )
+        refreshRunningApps()
+        return applyTrashAppItemsOutcome(outcome, app: app, diskSpace: DiskSpaceSummary.current())
+    }
+
+    nonisolated private static func orderedResidualsToTrash(
+        app: InstalledAppTarget,
+        selectedResidualIDs: Set<String>
+    ) -> [AppResidualItem] {
+        app.residuals
             .filter { selectedResidualIDs.contains($0.id) }
             .sorted { lhs, rhs in
                 if lhs.kind == .appBundle { return false }
                 if rhs.kind == .appBundle { return true }
                 return lhs.sizeBytes > rhs.sizeBytes
             }
+    }
 
+    private static func waitForAppTermination(bundleID: String) async {
+        for _ in 0..<20 {
+            let stillRunning = await MainActor.run {
+                !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+            }
+            if !stillRunning {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    nonisolated private static func performTrashAppItems(
+        _ chosen: [AppResidualItem],
+        app: InstalledAppTarget,
+        homeDirectory: URL,
+        allowedApplicationDirectories: [URL]?,
+        trashHandler: ((URL) throws -> Void)?
+    ) -> (trashedIDs: Set<String>, trashedAppBundle: Bool, freedBytes: UInt64, skippedCount: Int) {
         var trashedIDs: Set<String> = []
         var trashedAppBundle = false
         var freedBytes: UInt64 = 0
@@ -452,7 +697,8 @@ final class DiskCleaner {
                 item,
                 app: app,
                 homeDirectory: homeDirectory,
-                allowedApplicationDirectories: allowedApplicationDirectories
+                allowedApplicationDirectories: allowedApplicationDirectories,
+                allowRunning: trashHandler != nil
             ) else {
                 skippedCount += 1
                 continue
@@ -473,7 +719,17 @@ final class DiskCleaner {
             }
         }
 
-        if trashedAppBundle {
+        return (trashedIDs, trashedAppBundle, freedBytes, skippedCount)
+    }
+
+    @discardableResult
+    private func applyTrashAppItemsOutcome(
+        _ outcome: (trashedIDs: Set<String>, trashedAppBundle: Bool, freedBytes: UInt64, skippedCount: Int),
+        app: InstalledAppTarget,
+        diskSpace newSpace: DiskSpaceSummary
+    ) -> CleanSummaryReport {
+        if outcome.trashedAppBundle {
+            droppedAppTargets.removeValue(forKey: app.id)
             appIconCache.removeValue(forKey: app.id)
             installedApps.removeAll { $0.id == app.id }
             if let nextApp = installedApps.first {
@@ -482,10 +738,10 @@ final class DiskCleaner {
                 selectedAppID = nil
                 selectedResidualIDs.removeAll()
             }
-        } else if !trashedIDs.isEmpty,
+        } else if !outcome.trashedIDs.isEmpty,
                   let idx = installedApps.firstIndex(where: { $0.id == app.id }) {
-            let remaining = app.residuals.filter { !trashedIDs.contains($0.id) }
-            installedApps[idx] = InstalledAppTarget(
+            let remaining = app.residuals.filter { !outcome.trashedIDs.contains($0.id) }
+            let updated = InstalledAppTarget(
                 bundleURL: app.bundleURL,
                 bundleID: app.bundleID,
                 displayName: app.displayName,
@@ -494,33 +750,46 @@ final class DiskCleaner {
                 residuals: remaining,
                 lastModified: app.lastModified
             )
-            selectedResidualIDs.subtract(trashedIDs)
+            installedApps[idx] = updated
+            if droppedAppTargets[app.id] != nil {
+                droppedAppTargets[app.id] = updated
+            }
+            selectedResidualIDs.subtract(outcome.trashedIDs)
         }
 
-        refreshDiskSpace()
+        diskSpace = newSpace
         let report = CleanSummaryReport(
-            trashedCount: trashedIDs.count,
-            freedBytes: freedBytes,
-            skippedCount: skippedCount,
+            trashedCount: outcome.trashedIDs.count,
+            freedBytes: outcome.freedBytes,
+            skippedCount: outcome.skippedCount,
             completedAt: .now
         )
         lastUninstallReport = report
         return report
     }
 
-    /// Cancels any active scan when the Control Center window closes so background work is strictly zero.
+    /// Cancels any active scan when the Control Center window closes so background work stops immediately.
     func cancelInFlightScan() {
         if isScanning {
+            scanCancelToken?.cancel()
+            scanCancelToken = nil
             scanTask?.cancel()
             scanTask = nil
             scanGeneration &+= 1
             isScanning = false
         }
         if isScanningApps {
+            appScanCancelToken?.cancel()
+            appScanCancelToken = nil
             appScanTask?.cancel()
             appScanTask = nil
             appScanGeneration &+= 1
             isScanningApps = false
+        }
+        if isInspectingDrop {
+            dropInspectTask?.cancel()
+            dropInspectTask = nil
+            isInspectingDrop = false
         }
     }
 

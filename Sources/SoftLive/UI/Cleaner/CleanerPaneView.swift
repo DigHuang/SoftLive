@@ -62,7 +62,7 @@ private enum AppListSortOrder: String, CaseIterable, Identifiable {
 
 /// Right-pane workspace for the `Cleaner` section inside `ControlCenterWindow`.
 /// Supports two integrated modes:
-/// 1. `缓存与残留 (Junk & Caches)` — 4-category allowlist Bento + full-height candidate table;
+/// 1. `缓存与残留 (Junk & Caches)` — 4-category allowlist Bento + lazy candidate table;
 /// 2. `应用卸载 (App Uninstaller)` — master-detail installed app browser, `.app` drag-and-drop,
 ///    full uninstallation, and residuals-only "App Data Reset".
 struct CleanerPaneView: View {
@@ -75,19 +75,29 @@ struct CleanerPaneView: View {
     @State private var sortOrder: CleanSortOrder = .sizeDesc
     @State private var searchQuery: String = ""
     @State private var confirmingTrash = false
-    @State private var hoveredCandidateID: String?
 
     // App Uninstaller UI state
     @State private var appSearchQuery: String = ""
     @State private var appSortOrder: AppListSortOrder = .totalSizeDesc
     @State private var confirmingAppTrash = false
-    @State private var hoveredAppID: String?
-    @State private var hoveredResidualID: String?
     @State private var isDropTargeted = false
 
     private var isDark: Bool { colorScheme == .dark }
 
-    private var displayedCandidates: [CleanCandidate] {
+    // High-contrast fills for `.white` text buttons in dark mode without altering shared `MonitorPalette`.
+    private var solidEmeraldFill: Color {
+        isDark ? Color(red: 0.04, green: 0.52, blue: 0.39) : MonitorPalette.emerald
+    }
+
+    private var solidOrangeFill: Color {
+        isDark ? Color(red: 0.80, green: 0.33, blue: 0.02) : MonitorPalette.orange
+    }
+
+    private var solidIndigoFill: Color {
+        isDark ? Color(red: 0.33, green: 0.34, blue: 0.78) : MonitorPalette.indigo
+    }
+
+    private func computeDisplayedCandidates() -> [CleanCandidate] {
         let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let filtered = cleaner.candidates.filter { item in
             if let filterCategory, item.category != filterCategory {
@@ -102,7 +112,8 @@ struct CleanerPaneView: View {
                 if item.safetyTier != .checkFirst { return false }
             }
             if !trimmedQuery.isEmpty {
-                let matchesTitle = item.title.lowercased().contains(trimmedQuery)
+                let matchesTitle = item.displayTitle.lowercased().contains(trimmedQuery)
+                    || item.title.lowercased().contains(trimmedQuery)
                 let matchesPath = item.subtitle.lowercased().contains(trimmedQuery)
                 let matchesCat = item.category.title.lowercased().contains(trimmedQuery)
                 if !matchesTitle && !matchesPath && !matchesCat {
@@ -116,7 +127,7 @@ struct CleanerPaneView: View {
         case .sizeDesc:
             return filtered.sorted { lhs, rhs in
                 if lhs.sizeBytes != rhs.sizeBytes { return lhs.sizeBytes > rhs.sizeBytes }
-                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                return lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
             }
         case .ageDesc:
             return filtered.sorted { lhs, rhs in
@@ -127,14 +138,14 @@ struct CleanerPaneView: View {
             }
         case .nameAsc:
             return filtered.sorted { lhs, rhs in
-                let cmp = lhs.title.localizedStandardCompare(rhs.title)
+                let cmp = lhs.displayTitle.localizedStandardCompare(rhs.displayTitle)
                 if cmp != .orderedSame { return cmp == .orderedAscending }
                 return lhs.sizeBytes > rhs.sizeBytes
             }
         }
     }
 
-    private var displayedApps: [InstalledAppTarget] {
+    private func computeDisplayedApps() -> [InstalledAppTarget] {
         let q = appSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let filtered = cleaner.installedApps.filter { app in
             guard !q.isEmpty else { return true }
@@ -157,10 +168,6 @@ struct CleanerPaneView: View {
                 lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
             }
         }
-    }
-
-    private var maxCandidateBytes: UInt64 {
-        max(cleaner.candidates.first?.sizeBytes ?? 1, 1)
     }
 
     var body: some View {
@@ -191,7 +198,7 @@ struct CleanerPaneView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
-                        .background(MonitorPalette.emerald, in: .capsule)
+                        .background(solidEmeraldFill, in: .capsule)
                     }
                     .allowsHitTesting(false)
             }
@@ -201,10 +208,21 @@ struct CleanerPaneView: View {
         }
         .onAppear {
             cleaner.refreshDiskSpace()
+            cleaner.refreshRunningApps()
             if cleaner.mode == .junkClean && cleaner.lastScanDate == nil && !cleaner.isScanning {
                 cleaner.scan()
             } else if cleaner.mode == .appUninstall && cleaner.lastAppScanDate == nil && !cleaner.isScanningApps {
                 cleaner.scanApps()
+            }
+        }
+        .task {
+            for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didLaunchApplicationNotification) {
+                cleaner.refreshRunningApps()
+            }
+        }
+        .task {
+            for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didTerminateApplicationNotification) {
+                cleaner.refreshRunningApps()
             }
         }
         .onChange(of: cleaner.mode) { _, newMode in
@@ -235,14 +253,16 @@ struct CleanerPaneView: View {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .padding(.leading, 4)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
+
+            modeSwitcherPill
+                .fixedSize(horizontal: true, vertical: false)
         }
         .frame(height: 15)
-        .overlay(alignment: .trailing) {
-            modeSwitcherPill
-        }
     }
 
     private var modeSwitcherPill: some View {
@@ -272,6 +292,7 @@ struct CleanerPaneView: View {
                 .contentShape(.capsule)
                 .onTapGesture {
                     guard cleaner.mode != item else { return }
+                    cleaner.clearDropError()
                     withAnimation(.snappy(duration: 0.16)) {
                         cleaner.mode = item
                     }
@@ -297,9 +318,9 @@ struct CleanerPaneView: View {
 
     private var overviewAndBentoGroup: some View {
         VStack(alignment: .leading, spacing: 7) {
-            topSectionHeader(title: L10n.tr("存储概览与分类筛选", "Storage Overview & Categories"))
+            topSectionHeader(title: L10n.tr("存储概览与分类筛选", "Storage & Categories"))
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 10) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -311,7 +332,7 @@ struct CleanerPaneView: View {
                     .frame(width: 34, height: 34)
 
                     VStack(alignment: .leading, spacing: 2.5) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(
                                 L10n.tr(
                                     "可用 \(SystemMetrics.formatBytes(cleaner.diskSpace.availableBytes))",
@@ -323,7 +344,7 @@ struct CleanerPaneView: View {
 
                             Text(
                                 L10n.tr(
-                                    "/ 共 \(SystemMetrics.formatBytes(cleaner.diskSpace.totalBytes))（\(SystemMetrics.formatPercentage(cleaner.diskSpace.usedFraction))）",
+                                    "/ 共 \(SystemMetrics.formatBytes(cleaner.diskSpace.totalBytes)) (\(SystemMetrics.formatPercentage(cleaner.diskSpace.usedFraction)))",
                                     "of \(SystemMetrics.formatBytes(cleaner.diskSpace.totalBytes)) (\(SystemMetrics.formatPercentage(cleaner.diskSpace.usedFraction)))"
                                 )
                             )
@@ -336,12 +357,17 @@ struct CleanerPaneView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    staleThresholdPicker
                     actionButtons
                         .layoutPriority(1)
                 }
 
-                segmentedStorageBar
+                HStack(alignment: .center, spacing: 10) {
+                    segmentedStorageBar
+                        .frame(maxWidth: .infinity)
+
+                    staleThresholdPicker
+                        .fixedSize(horizontal: true, vertical: false)
+                }
 
                 HStack(spacing: 8) {
                     ForEach(CleanCategory.allCases) { category in
@@ -363,44 +389,73 @@ struct CleanerPaneView: View {
 
     @ViewBuilder
     private var statusSubtitleView: some View {
-        if cleaner.selectedBytes > 0 {
+        if let dropError = cleaner.dropErrorMessage {
+            dropErrorBanner(dropError)
+        } else if let report = cleaner.lastReport, report.trashedCount > 0 || report.skippedCount > 0 {
+            if report.trashedCount > 0 && report.skippedCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.amber)
+                    Text(
+                        L10n.tr(
+                            "已移入 \(report.trashedCount) 项（\(CleanCandidate.formatBytes(report.freedBytes))），\(report.skippedCount) 项跳过",
+                            "Moved \(report.trashedCount) (\(CleanCandidate.formatBytes(report.freedBytes))); \(report.skippedCount) skipped"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.amber)
+                    .lineLimit(1)
+
+                    openTrashLink
+                }
+            } else if report.trashedCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.cyan)
+                    Text(
+                        L10n.tr(
+                            "已移入 \(report.trashedCount) 项（\(CleanCandidate.formatBytes(report.freedBytes))）",
+                            "Moved \(report.trashedCount) (\(CleanCandidate.formatBytes(report.freedBytes))) to Trash"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.cyan)
+                    .lineLimit(1)
+
+                    openTrashLink
+                }
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.orange)
+                    Text(
+                        L10n.tr(
+                            "未能移入：\(report.skippedCount) 项正被占用或受保护",
+                            "Skipped \(report.skippedCount) items (in use or protected)"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.orange)
+                    .lineLimit(1)
+                }
+            }
+        } else if cleaner.selectedBytes > 0 {
             HStack(spacing: 5) {
                 Circle()
                     .fill(MonitorPalette.emerald)
                     .frame(width: 6, height: 6)
                 Text(
                     L10n.tr(
-                        "已选 \(cleaner.selectedCount) 项 · 可释放 \(CleanCandidate.formatBytes(cleaner.selectedBytes))（移入废纸篓）",
+                        "已选 \(cleaner.selectedCount) 项 · \(CleanCandidate.formatBytes(cleaner.selectedBytes)) 进废纸篓",
                         "\(cleaner.selectedCount) selected · \(CleanCandidate.formatBytes(cleaner.selectedBytes)) to Trash"
                     )
                 )
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(MonitorPalette.emerald)
                 .lineLimit(1)
-            }
-        } else if let report = cleaner.lastReport, report.trashedCount > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(MonitorPalette.cyan)
-                Text(
-                    L10n.tr(
-                        "已将 \(report.trashedCount) 项移入废纸篓（\(CleanCandidate.formatBytes(report.freedBytes))）",
-                        "Moved \(report.trashedCount) items (\(CleanCandidate.formatBytes(report.freedBytes))) to Trash"
-                    )
-                )
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(MonitorPalette.cyan)
-                .lineLimit(1)
-
-                Text(L10n.tr("打开废纸篓", "Open Trash"))
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .underline()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        cleaner.openTrashInFinder()
-                    }
             }
         } else {
             Text(
@@ -412,6 +467,37 @@ struct CleanerPaneView: View {
             .font(.system(size: 11, weight: .regular))
             .foregroundStyle(.secondary)
             .lineLimit(1)
+        }
+    }
+
+    private var openTrashLink: some View {
+        Text(L10n.tr("打开废纸篓", "Open Trash"))
+            .font(.system(size: 10.5, weight: .semibold))
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(.primary)
+            .underline()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                cleaner.openTrashInFinder()
+            }
+    }
+
+    private func dropErrorBanner(_ message: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(MonitorPalette.orange)
+            Text(message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MonitorPalette.orange)
+                .lineLimit(1)
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    cleaner.clearDropError()
+                }
         }
     }
 
@@ -429,7 +515,8 @@ struct CleanerPaneView: View {
                 return (cat, min(max(raw, 14), totalUsedWidth * 0.20))
             }
             let sumCatWidth = catWidths.reduce(CGFloat(0)) { $0 + $1.1 }
-            let baseSystemWidth = max(totalUsedWidth - sumCatWidth, 12)
+            let spacingTotal = CGFloat(catWidths.filter { $0.1 > 0 }.count) * 1.5
+            let baseSystemWidth = max(min(totalUsedWidth, fullWidth - spacingTotal) - sumCatWidth, 12)
 
             ZStack(alignment: .leading) {
                 Capsule()
@@ -449,7 +536,7 @@ struct CleanerPaneView: View {
                         }
                     }
                 }
-                .frame(height: 7)
+                .frame(maxWidth: fullWidth, maxHeight: 7, alignment: .leading)
                 .clipShape(.capsule)
             }
         }
@@ -571,13 +658,19 @@ struct CleanerPaneView: View {
             .onTapGesture {
                 guard !cleaner.isScanning && !cleaner.isCleaning else { return }
                 confirmingTrash = false
+                cleaner.clearDropError()
                 cleaner.scan()
             }
 
             if cleaner.selectedCount > 0 {
-                let trashLabel = confirmingTrash
-                    ? L10n.tr("确认移入", "Confirm")
-                    : L10n.tr("移入废纸篓", "Move to Trash")
+                let trashLabel: String = {
+                    if cleaner.isCleaning {
+                        return L10n.tr("清理中…", "Moving…")
+                    }
+                    return confirmingTrash
+                        ? L10n.tr("确认移入", "Confirm")
+                        : L10n.tr("移入废纸篓", "Move to Trash")
+                }()
 
                 HStack(spacing: 4) {
                     Image(systemName: confirmingTrash ? "checkmark.circle.fill" : "trash.fill")
@@ -590,7 +683,7 @@ struct CleanerPaneView: View {
                 .padding(.horizontal, 11)
                 .frame(height: 26)
                 .background(
-                    confirmingTrash ? MonitorPalette.orange : MonitorPalette.emerald,
+                    confirmingTrash ? solidOrangeFill : solidEmeraldFill,
                     in: .capsule
                 )
                 .contentShape(.capsule)
@@ -598,7 +691,7 @@ struct CleanerPaneView: View {
                     guard !cleaner.isScanning && !cleaner.isCleaning else { return }
                     if confirmingTrash {
                         confirmingTrash = false
-                        _ = cleaner.trashSelected()
+                        cleaner.trashSelectedAsync()
                     } else {
                         withAnimation(.snappy(duration: 0.15)) {
                             confirmingTrash = true
@@ -610,23 +703,27 @@ struct CleanerPaneView: View {
     }
 
     private var itemsWorkspaceGroup: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .center, spacing: 6) {
+        let filtered = computeDisplayedCandidates()
+        let firstID = filtered.first?.id
+        let maxBytes = max(cleaner.candidates.first?.sizeBytes ?? 1, 1)
+        let now = Date.now
+
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 5) {
                 HStack(spacing: 5) {
                     Text(
-                        filterCategory.map {
-                            L10n.tr("明细 · \($0.shortTitle)", "\($0.shortTitle)")
-                        } ?? L10n.tr("扫描明细", "Items")
+                        filterCategory?.shortTitle ?? L10n.tr("扫描明细", "Items")
                     )
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                     if cleaner.lastScanDate != nil {
-                        Text("\(displayedCandidates.count)")
+                        Text("\(filtered.count)")
                             .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5.5)
+                            .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
                                 isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
@@ -637,6 +734,7 @@ struct CleanerPaneView: View {
                     if filterCategory != nil {
                         Text(L10n.tr("全部", "All"))
                             .font(.system(size: 10.5, weight: .semibold))
+                            .fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(MonitorPalette.emerald)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -674,24 +772,43 @@ struct CleanerPaneView: View {
                     ) {
                         cleaner.scan()
                     }
-                } else if displayedCandidates.isEmpty {
+                } else if filtered.isEmpty {
+                    let hasNoFilter = cleaner.candidates.isEmpty && searchQuery.isEmpty && filterCategory == nil && tierFilter == .all
                     placeholderView(
                         icon: "checkmark.seal.fill",
-                        title: L10n.tr("未发现匹配项", "No Matching Items"),
-                        subtitle: searchQuery.isEmpty
-                            ? L10n.tr("当前分类或筛选条件下没有可清理项", "No cleanable items match the current filter")
-                            : L10n.tr("未找到包含「\(searchQuery)」的扫描项", "No items matching \"\(searchQuery)\"")
+                        title: hasNoFilter
+                            ? L10n.tr("空间干净，暂无可清理项", "All Clear")
+                            : L10n.tr("未发现匹配项", "No Matching Items"),
+                        subtitle: !searchQuery.isEmpty
+                            ? L10n.tr("未找到包含「\(searchQuery)」的扫描项", "No items matching \"\(searchQuery)\"")
+                            : (hasNoFilter
+                                ? L10n.tr("当前白名单路径下暂无符合条件的缓存或残留", "No cleanable caches or stale artifacts found")
+                                : L10n.tr("当前分类或筛选条件下没有可清理项", "No cleanable items match the current filter"))
                     ) {
                         cleaner.scan()
                     }
                 } else {
                     ScrollView(.vertical, showsIndicators: true) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(displayedCandidates.enumerated()), id: \.element.id) { index, item in
-                                if index > 0 {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(filtered) { item in
+                                if item.id != firstID {
                                     rowDivider
                                 }
-                                candidateRow(item)
+                                CleanerCandidateRow(
+                                    item: item,
+                                    isSelected: cleaner.selectedIDs.contains(item.id),
+                                    showCategoryTag: filterCategory == nil,
+                                    maxCandidateBytes: maxBytes,
+                                    now: now,
+                                    isDark: isDark,
+                                    onToggle: {
+                                        confirmingTrash = false
+                                        cleaner.toggleCandidate(item.id)
+                                    },
+                                    onReveal: { cleaner.revealInFinder(item.url) },
+                                    onCopyPath: { cleaner.copyPath(item.url) },
+                                    onOpenTrash: { cleaner.openTrashInFinder() }
+                                )
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -724,7 +841,7 @@ struct CleanerPaneView: View {
 
     private var appUninstallOverviewGroup: some View {
         VStack(alignment: .leading, spacing: 7) {
-            topSectionHeader(title: L10n.tr("应用卸载与数据重置（支持拖入 .app）", "App Uninstaller & Reset (Drop .app Supported)"))
+            topSectionHeader(title: L10n.tr("应用卸载与重置（支持拖入 .app）", "App Uninstaller (Drop .app)"))
 
             HStack(alignment: .center, spacing: 10) {
                 ZStack {
@@ -779,29 +896,63 @@ struct CleanerPaneView: View {
 
     @ViewBuilder
     private var appUninstallSubtitleView: some View {
-        if let report = cleaner.lastUninstallReport, report.trashedCount > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(MonitorPalette.cyan)
-                Text(
-                    L10n.tr(
-                        "已移入废纸篓 \(report.trashedCount) 项（\(CleanCandidate.formatBytes(report.freedBytes))）",
-                        "Moved \(report.trashedCount) items (\(CleanCandidate.formatBytes(report.freedBytes))) to Trash"
-                    )
-                )
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(MonitorPalette.cyan)
+        if let dropError = cleaner.dropErrorMessage {
+            dropErrorBanner(dropError)
+        } else if cleaner.isInspectingDrop {
+            Text(L10n.tr("正在解析拖入的应用包与关联数据…", "Inspecting dropped .app bundle…"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MonitorPalette.purple)
                 .lineLimit(1)
+        } else if let report = cleaner.lastUninstallReport, report.trashedCount > 0 || report.skippedCount > 0 {
+            if report.trashedCount > 0 && report.skippedCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.amber)
+                    Text(
+                        L10n.tr(
+                            "已移入 \(report.trashedCount) 项（\(CleanCandidate.formatBytes(report.freedBytes))），\(report.skippedCount) 项跳过",
+                            "Moved \(report.trashedCount) (\(CleanCandidate.formatBytes(report.freedBytes))); \(report.skippedCount) skipped"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.amber)
+                    .lineLimit(1)
 
-                Text(L10n.tr("打开废纸篓", "Open Trash"))
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .underline()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        cleaner.openTrashInFinder()
-                    }
+                    openTrashLink
+                }
+            } else if report.trashedCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.cyan)
+                    Text(
+                        L10n.tr(
+                            "已移入废纸篓 \(report.trashedCount) 项（\(CleanCandidate.formatBytes(report.freedBytes))）",
+                            "Moved \(report.trashedCount) (\(CleanCandidate.formatBytes(report.freedBytes))) to Trash"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.cyan)
+                    .lineLimit(1)
+
+                    openTrashLink
+                }
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MonitorPalette.orange)
+                    Text(
+                        L10n.tr(
+                            "未能移除：应用未退出或 \(report.skippedCount) 项受保护",
+                            "Blocked: app still running or \(report.skippedCount) protected"
+                        )
+                    )
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(MonitorPalette.orange)
+                    .lineLimit(1)
+                }
             }
         } else if let app = cleaner.selectedApp, cleaner.selectedAppItemCount > 0 {
             let fullUninstall = cleaner.isSelectedAppBundleChecked
@@ -812,23 +963,24 @@ struct CleanerPaneView: View {
                 Text(
                     fullUninstall
                         ? L10n.tr(
-                            "彻底卸载「\(app.displayName)」· 已选 \(cleaner.selectedAppItemCount) 项（\(CleanCandidate.formatBytes(cleaner.selectedAppBytes)) 进废纸篓）",
+                            "卸载「\(app.displayName)」· \(cleaner.selectedAppItemCount) 项（\(CleanCandidate.formatBytes(cleaner.selectedAppBytes))）",
                             "Uninstall \(app.displayName) · \(cleaner.selectedAppItemCount) items (\(CleanCandidate.formatBytes(cleaner.selectedAppBytes)))"
                         )
                         : L10n.tr(
-                            "仅重置「\(app.displayName)」数据 · 已选 \(cleaner.selectedAppItemCount) 项（\(CleanCandidate.formatBytes(cleaner.selectedAppBytes))，保留应用本体）",
-                            "Reset \(app.displayName) data · \(cleaner.selectedAppItemCount) items (\(CleanCandidate.formatBytes(cleaner.selectedAppBytes)), keeps .app)"
+                            "重置「\(app.displayName)」数据 · \(cleaner.selectedAppItemCount) 项（保留 .app）",
+                            "Reset \(app.displayName) · \(cleaner.selectedAppItemCount) items (keeps .app)"
                         )
                 )
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(fullUninstall ? MonitorPalette.emerald : MonitorPalette.indigo)
                 .lineLimit(1)
+                .truncationMode(.middle)
             }
         } else {
             Text(
                 L10n.tr(
-                    "选择左侧应用或从访达拖入 .app，自动关联 Application Support、Caches、Preferences 与容器",
-                    "Select an app or drop a .app bundle to inspect its bundle and ~/Library leftovers"
+                    "选择应用或拖入 .app，自动关联 8 类残留数据",
+                    "Select an app or drop .app to inspect 8 data kinds"
                 )
             )
             .font(.system(size: 11, weight: .regular))
@@ -888,14 +1040,20 @@ struct CleanerPaneView: View {
             .onTapGesture {
                 guard !cleaner.isScanningApps && !cleaner.isCleaning else { return }
                 confirmingAppTrash = false
+                cleaner.clearDropError()
                 cleaner.scanApps()
             }
 
             if cleaner.selectedAppItemCount > 0 {
                 let isFullUninstall = cleaner.isSelectedAppBundleChecked
                 let actionLabel: String = {
+                    if cleaner.isCleaning {
+                        return L10n.tr("处理中…", "Working…")
+                    }
                     if confirmingAppTrash {
-                        return L10n.tr("确认移入", "Confirm")
+                        return isFullUninstall
+                            ? L10n.tr("确认卸载", "Confirm Uninstall")
+                            : L10n.tr("确认重置", "Confirm Reset")
                     }
                     return isFullUninstall
                         ? L10n.tr("卸载至废纸篓", "Uninstall")
@@ -914,8 +1072,8 @@ struct CleanerPaneView: View {
                 .frame(height: 26)
                 .background(
                     confirmingAppTrash
-                        ? MonitorPalette.orange
-                        : (isFullUninstall ? MonitorPalette.emerald : MonitorPalette.indigo),
+                        ? solidOrangeFill
+                        : (isFullUninstall ? solidEmeraldFill : solidIndigoFill),
                     in: .capsule
                 )
                 .contentShape(.capsule)
@@ -923,7 +1081,7 @@ struct CleanerPaneView: View {
                     guard !cleaner.isScanningApps && !cleaner.isCleaning else { return }
                     if confirmingAppTrash {
                         confirmingAppTrash = false
-                        _ = cleaner.trashSelectedAppItems()
+                        cleaner.trashSelectedAppItemsAsync()
                     } else {
                         withAnimation(.snappy(duration: 0.15)) {
                             confirmingAppTrash = true
@@ -935,17 +1093,22 @@ struct CleanerPaneView: View {
     }
 
     private var appUninstallSplitGroup: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Left Master Column: Installed Apps List (216 pt)
+        let apps = computeDisplayedApps()
+        let firstAppID = apps.first?.id
+
+        return HStack(alignment: .top, spacing: 10) {
+            // Left Master Column: Installed Apps List (204 pt)
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center, spacing: 4) {
                     Text(L10n.tr("应用列表", "Applications"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                         .padding(.leading, 4)
 
-                    Text("\(displayedApps.count)")
+                    Text("\(apps.count)")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -994,7 +1157,7 @@ struct CleanerPaneView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else if displayedApps.isEmpty {
+                        } else if apps.isEmpty {
                             VStack(spacing: 6) {
                                 Image(systemName: "app.dashed")
                                     .font(.system(size: 20))
@@ -1006,12 +1169,22 @@ struct CleanerPaneView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             ScrollView(.vertical, showsIndicators: true) {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(Array(displayedApps.enumerated()), id: \.element.id) { index, app in
-                                        if index > 0 {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    ForEach(apps) { app in
+                                        if app.id != firstAppID {
                                             rowDivider
                                         }
-                                        installedAppRow(app)
+                                        CleanerInstalledAppRow(
+                                            app: app,
+                                            icon: cleaner.icon(for: app),
+                                            isSelected: cleaner.selectedApp?.id == app.id,
+                                            isRunning: cleaner.isAppRunning(app),
+                                            isDark: isDark,
+                                            onSelect: {
+                                                confirmingAppTrash = false
+                                                cleaner.selectApp(app.id)
+                                            }
+                                        )
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1032,40 +1205,62 @@ struct CleanerPaneView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .frame(width: 216)
+            .frame(width: 204)
 
             // Right Detail Column: Selected App Breakdown & Residual Files
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center, spacing: 6) {
                     Text(
                         cleaner.selectedApp.map {
-                            L10n.tr("关联文件明细 · \($0.displayName)", "Associated Files · \($0.displayName)")
-                        } ?? L10n.tr("关联文件明细", "Associated Files")
+                            L10n.tr("关联文件 · \($0.displayName)", "Associated Files · \($0.displayName)")
+                        } ?? L10n.tr("关联文件", "Associated Files")
                     )
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .padding(.leading, 4)
 
-                    Spacer(minLength: 4)
-
-                    if cleaner.selectedApp != nil {
-                        appResidualQuickButtons
+                    if let app = cleaner.selectedApp {
+                        Text("\(app.residuals.count)")
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .fixedSize(horizontal: true, vertical: false)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
+                                in: .capsule
+                            )
                     }
+
+                    Spacer(minLength: 0)
                 }
+                .frame(height: 20)
 
                 Group {
                     if let app = cleaner.selectedApp {
+                        let firstResidualID = app.residuals.first?.id
                         VStack(alignment: .leading, spacing: 0) {
                             selectedAppHeroHeader(app)
                             rowDivider
                             ScrollView(.vertical, showsIndicators: true) {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(Array(app.residuals.enumerated()), id: \.element.id) { index, item in
-                                        if index > 0 {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    ForEach(app.residuals) { item in
+                                        if item.id != firstResidualID {
                                             rowDivider
                                         }
-                                        residualItemRow(item, app: app)
+                                        CleanerResidualRow(
+                                            item: item,
+                                            isSelected: cleaner.selectedResidualIDs.contains(item.id),
+                                            isDark: isDark,
+                                            onToggle: {
+                                                confirmingAppTrash = false
+                                                cleaner.toggleResidual(item.id)
+                                            },
+                                            onReveal: { cleaner.revealInFinder(item.url) },
+                                            onCopyPath: { cleaner.copyPath(item.url) }
+                                        )
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1098,150 +1293,93 @@ struct CleanerPaneView: View {
         }
     }
 
-    private func installedAppRow(_ app: InstalledAppTarget) -> some View {
-        let isSelected = cleaner.selectedApp?.id == app.id
-        let isHovered = hoveredAppID == app.id
-        let isRunning = cleaner.isAppRunning(app)
-
-        return HStack(spacing: 9) {
-            Image(nsImage: cleaner.icon(for: app))
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 28, height: 28)
-
-            VStack(alignment: .leading, spacing: 1.5) {
-                HStack(spacing: 4) {
-                    Text(app.displayName)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    if isRunning {
-                        Circle()
-                            .fill(MonitorPalette.emerald)
-                            .frame(width: 5.5, height: 5.5)
-                    }
-                }
-
-                Text(
-                    app.residualSizeBytes > 0
-                        ? L10n.tr(
-                            "残留 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
-                            "+\(CleanCandidate.formatBytes(app.residualSizeBytes)) data"
-                        )
-                        : L10n.tr("无附加残留", "Bundle only")
-                )
-                .font(.system(size: 10, weight: .regular).monospacedDigit())
-                .foregroundStyle(app.residualSizeBytes > 0 ? MonitorPalette.purple : .secondary)
-                .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(CleanCandidate.formatBytes(app.totalSizeBytes))
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 46)
-        .background {
-            if isSelected {
-                Rectangle()
-                    .fill(MonitorPalette.purple.opacity(isDark ? 0.18 : 0.10))
-            } else if isHovered {
-                Rectangle()
-                    .fill(isDark ? Color.white.opacity(0.04) : Color.black.opacity(0.025))
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hoveredAppID = hovering ? app.id : (hoveredAppID == app.id ? nil : hoveredAppID)
-        }
-        .onTapGesture {
-            confirmingAppTrash = false
-            cleaner.selectApp(app.id)
-        }
-    }
-
     private func selectedAppHeroHeader(_ app: InstalledAppTarget) -> some View {
         let isRunning = cleaner.isAppRunning(app)
 
-        return HStack(spacing: 11) {
-            Image(nsImage: cleaner.icon(for: app))
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 36, height: 36)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(nsImage: cleaner.icon(for: app))
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 34, height: 34)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(app.displayName)
-                        .font(.system(size: 13.5, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(app.displayName)
+                            .font(.system(size: 13.5, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                    Text("v\(app.version)")
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5.5)
-                        .padding(.vertical, 1)
-                        .background(
-                            isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05),
-                            in: .capsule
-                        )
-
-                    if isRunning {
-                        Text(L10n.tr("运行中", "Running"))
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(MonitorPalette.amber)
+                        Text("v\(app.version)")
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(1)
+                            .foregroundStyle(.secondary)
                             .padding(.horizontal, 5.5)
                             .padding(.vertical, 1)
-                            .background(MonitorPalette.amber.opacity(0.15), in: .capsule)
+                            .background(
+                                isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05),
+                                in: .capsule
+                            )
+
+                        if isRunning {
+                            Text(L10n.tr("运行中", "Running"))
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .fixedSize(horizontal: true, vertical: false)
+                                .layoutPriority(1)
+                                .foregroundStyle(MonitorPalette.amber)
+                                .padding(.horizontal, 5.5)
+                                .padding(.vertical, 1)
+                                .background(MonitorPalette.amber.opacity(0.15), in: .capsule)
+                        }
                     }
-                }
 
-                Text(
-                    L10n.tr(
-                        "\(app.bundleID) · 本体 \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · 关联 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
-                        "\(app.bundleID) · App \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · Data \(CleanCandidate.formatBytes(app.residualSizeBytes))"
+                    Text(
+                        L10n.tr(
+                            "\(app.bundleID) · 本体 \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · 关联 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
+                            "\(app.bundleID) · App \(CleanCandidate.formatBytes(app.bundleSizeBytes)) · Data \(CleanCandidate.formatBytes(app.residualSizeBytes))"
+                        )
                     )
-                )
-                .font(.system(size: 10.5, weight: .regular).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Image(systemName: "folder")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
-                .background(
-                    isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.04),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    cleaner.revealInFinder(app.bundleURL)
+                    .font(.system(size: 10.5, weight: .regular).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "folder")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.04),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        cleaner.revealInFinder(app.bundleURL)
+                    }
+            }
+
+            appResidualQuickButtons
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
     private var appResidualQuickButtons: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             let isFull = cleaner.isSelectedAppBundleChecked
             let hasAny = cleaner.selectedAppItemCount > 0
 
             Text(L10n.tr("完整卸载", "Full Uninstall"))
-                .font(.system(size: 10, weight: isFull ? .semibold : .regular))
+                .font(.system(size: 10.5, weight: isFull ? .semibold : .regular))
                 .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(isFull ? MonitorPalette.emerald : .secondary)
-                .padding(.horizontal, 7)
-                .frame(height: 20)
+                .padding(.horizontal, 8)
+                .frame(height: 21)
                 .background(
                     isFull
                         ? MonitorPalette.emerald.opacity(0.14)
@@ -1255,11 +1393,11 @@ struct CleanerPaneView: View {
                 }
 
             Text(L10n.tr("仅清数据", "Reset Data"))
-                .font(.system(size: 10, weight: (!isFull && hasAny) ? .semibold : .regular))
+                .font(.system(size: 10.5, weight: (!isFull && hasAny) ? .semibold : .regular))
                 .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle((!isFull && hasAny) ? MonitorPalette.indigo : .secondary)
-                .padding(.horizontal, 7)
-                .frame(height: 20)
+                .padding(.horizontal, 8)
+                .frame(height: 21)
                 .background(
                     (!isFull && hasAny)
                         ? MonitorPalette.indigo.opacity(0.14)
@@ -1272,13 +1410,15 @@ struct CleanerPaneView: View {
                     cleaner.selectAppResidualsOnly()
                 }
 
+            Spacer(minLength: 4)
+
             if hasAny {
                 Text(L10n.tr("清空", "Clear"))
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6.5)
-                    .frame(height: 20)
+                    .padding(.horizontal, 7.5)
+                    .frame(height: 21)
                     .background(
                         isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.045),
                         in: .capsule
@@ -1288,108 +1428,6 @@ struct CleanerPaneView: View {
                         confirmingAppTrash = false
                         cleaner.deselectAllAppResiduals()
                     }
-            }
-        }
-    }
-
-    private func residualItemRow(_ item: AppResidualItem, app: InstalledAppTarget) -> some View {
-        let isSelected = cleaner.selectedResidualIDs.contains(item.id)
-        let isHovered = hoveredResidualID == item.id
-        let accent = item.kind.accentColor
-
-        return HStack(spacing: 10) {
-            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                .font(.system(size: 13.5, weight: .semibold))
-                .foregroundStyle(isSelected ? accent : .secondary.opacity(0.65))
-                .frame(width: 18, height: 18)
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 6.5, style: .continuous)
-                    .fill(accent.opacity(isDark ? 0.18 : 0.11))
-                Image(systemName: item.kind.icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(accent)
-            }
-            .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 1.5) {
-                HStack(spacing: 5) {
-                    Text(item.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    Text(item.kind.title)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .fixedSize(horizontal: true, vertical: false)
-                        .foregroundStyle(accent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(accent.opacity(0.13), in: .capsule)
-
-                    if item.safetyTier == .checkFirst {
-                        Text(item.safetyTier.badgeTitle)
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .fixedSize(horizontal: true, vertical: false)
-                            .foregroundStyle(MonitorPalette.amber)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(MonitorPalette.amber.opacity(0.15), in: .capsule)
-                    }
-                }
-
-                Text(item.subtitle)
-                    .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(CleanCandidate.formatBytes(item.sizeBytes))
-                .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .fixedSize(horizontal: true, vertical: false)
-
-            Image(systemName: "folder")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(isHovered ? .primary : .secondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    cleaner.revealInFinder(item.url)
-                }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 42)
-        .background(
-            isHovered
-                ? (isDark ? Color.white.opacity(0.035) : Color.black.opacity(0.02))
-                : Color.clear
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hoveredResidualID = hovering ? item.id : (hoveredResidualID == item.id ? nil : hoveredResidualID)
-        }
-        .onTapGesture {
-            confirmingAppTrash = false
-            cleaner.toggleResidual(item.id)
-        }
-        .contextMenu {
-            Button(
-                isSelected
-                    ? L10n.tr("取消勾选", "Deselect")
-                    : L10n.tr("勾选此项", "Select")
-            ) {
-                confirmingAppTrash = false
-                cleaner.toggleResidual(item.id)
-            }
-            Button(L10n.tr("在访达中显示", "Reveal in Finder")) {
-                cleaner.revealInFinder(item.url)
-            }
-            Button(L10n.tr("复制完整路径", "Copy Path")) {
-                cleaner.copyPath(item.url)
             }
         }
     }
@@ -1405,7 +1443,7 @@ struct CleanerPaneView: View {
             TextField(L10n.tr("搜索…", "Search…"), text: $searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11))
-                .frame(width: 78)
+                .frame(width: 66)
 
             if !searchQuery.isEmpty {
                 Image(systemName: "xmark.circle.fill")
@@ -1453,8 +1491,9 @@ struct CleanerPaneView: View {
                     .contentShape(.capsule)
                     .onTapGesture {
                         guard preferences.cleanStaleThreshold != option else { return }
+                        confirmingTrash = false
                         preferences.cleanStaleThreshold = option
-                        if cleaner.lastScanDate != nil && !cleaner.isScanning {
+                        if cleaner.lastScanDate != nil && !cleaner.isScanning && !cleaner.isCleaning {
                             cleaner.scan()
                         }
                     }
@@ -1475,7 +1514,7 @@ struct CleanerPaneView: View {
                     .font(.system(size: 10.5, weight: isSelected ? .semibold : .regular))
                     .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(isSelected ? .primary : .secondary)
-                    .padding(.horizontal, 6.5)
+                    .padding(.horizontal, 5.5)
                     .frame(height: 18)
                     .background {
                         if isSelected {
@@ -1510,7 +1549,7 @@ struct CleanerPaneView: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 7)
+        .padding(.horizontal, 6.5)
         .frame(height: 22)
         .background(
             isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.045),
@@ -1531,7 +1570,7 @@ struct CleanerPaneView: View {
             .font(.system(size: 10.5, weight: .medium))
             .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 6.5)
             .frame(height: 22)
             .background(
                 isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.045),
@@ -1548,13 +1587,117 @@ struct CleanerPaneView: View {
             }
     }
 
-    private func candidateRow(_ item: CleanCandidate) -> some View {
-        let isSelected = cleaner.selectedIDs.contains(item.id)
-        let isHovered = hoveredCandidateID == item.id
+    private func placeholderView(
+        icon: String,
+        title: String,
+        subtitle: String,
+        showScanButton: Bool = false,
+        onScan: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(MonitorPalette.emerald.opacity(isDark ? 0.16 : 0.10))
+                    .frame(width: 44, height: 44)
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(MonitorPalette.emerald)
+            }
+
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text(subtitle)
+                .font(.system(size: 11.5, weight: .regular))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
+            if showScanButton {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(L10n.tr("立即扫描", "Scan Now"))
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .frame(height: 30)
+                .background(solidEmeraldFill, in: .capsule)
+                .padding(.top, 4)
+                .contentShape(.capsule)
+                .onTapGesture {
+                    onScan()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Finder .app Drag & Drop Handler
+
+    private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }) else {
+            return false
+        }
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            let resolvedURL: URL?
+            if let data = item as? Data {
+                resolvedURL = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let url = item as? URL {
+                resolvedURL = url
+            } else {
+                resolvedURL = nil
+            }
+            guard let appURL = resolvedURL else { return }
+            Task { @MainActor in
+                cleaner.inspectDroppedAppURL(appURL)
+            }
+        }
+        return true
+    }
+
+    // MARK: - Shared Form Chrome
+
+    private var dividerColor: Color {
+        isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
+    }
+
+    private var borderColor: Color {
+        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
+    }
+
+    private var rowDivider: some View {
+        Rectangle()
+            .fill(dividerColor)
+            .frame(height: 0.5)
+    }
+}
+
+// MARK: - Isolated Row Subviews (Keep Hover State Out of Parent Body)
+
+private struct CleanerCandidateRow: View {
+    let item: CleanCandidate
+    let isSelected: Bool
+    let showCategoryTag: Bool
+    let maxCandidateBytes: UInt64
+    let now: Date
+    let isDark: Bool
+    let onToggle: () -> Void
+    let onReveal: () -> Void
+    let onCopyPath: () -> Void
+    let onOpenTrash: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
         let accent = item.category.accentColor
         let sizeRatio = min(max(Double(item.sizeBytes) / Double(maxCandidateBytes), 0.06), 1.0)
 
-        return HStack(spacing: 10) {
+        HStack(spacing: 10) {
             Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(isSelected ? accent : .secondary.opacity(0.65))
@@ -1571,7 +1714,7 @@ struct CleanerPaneView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(item.title)
+                    Text(item.displayTitle)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -1585,7 +1728,7 @@ struct CleanerPaneView: View {
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(MonitorPalette.amber.opacity(0.15), in: .capsule)
-                    } else if filterCategory == nil {
+                    } else if showCategoryTag {
                         Text(item.category.shortTitle)
                             .font(.system(size: 9.5, weight: .medium))
                             .fixedSize(horizontal: true, vertical: false)
@@ -1598,7 +1741,7 @@ struct CleanerPaneView: View {
                             )
                     }
 
-                    if let age = item.formattedAge() {
+                    if let age = item.formattedAge(now: now) {
                         Text(age)
                             .font(.system(size: 10, weight: .regular).monospacedDigit())
                             .fixedSize(horizontal: true, vertical: false)
@@ -1643,7 +1786,7 @@ struct CleanerPaneView: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    cleaner.revealInFinder(item.url)
+                    onReveal()
                 }
         }
         .padding(.horizontal, 14)
@@ -1655,11 +1798,12 @@ struct CleanerPaneView: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering in
-            hoveredCandidateID = hovering ? item.id : (hoveredCandidateID == item.id ? nil : hoveredCandidateID)
+            if isHovered != hovering {
+                isHovered = hovering
+            }
         }
         .onTapGesture {
-            confirmingTrash = false
-            cleaner.toggleCandidate(item.id)
+            onToggle()
         }
         .contextMenu {
             Button(
@@ -1667,108 +1811,205 @@ struct CleanerPaneView: View {
                     ? L10n.tr("取消勾选", "Deselect")
                     : L10n.tr("勾选此项", "Select")
             ) {
-                confirmingTrash = false
-                cleaner.toggleCandidate(item.id)
+                onToggle()
             }
             Button(L10n.tr("在访达中显示", "Reveal in Finder")) {
-                cleaner.revealInFinder(item.url)
+                onReveal()
             }
             Button(L10n.tr("复制完整路径", "Copy Path")) {
-                cleaner.copyPath(item.url)
+                onCopyPath()
             }
             Divider()
             Button(L10n.tr("打开系统废纸篓", "Open Trash")) {
-                cleaner.openTrashInFinder()
+                onOpenTrash()
             }
         }
     }
+}
 
-    private func placeholderView(
-        icon: String,
-        title: String,
-        subtitle: String,
-        showScanButton: Bool = false,
-        onScan: @escaping () -> Void
-    ) -> some View {
-        VStack(spacing: 8) {
+private struct CleanerInstalledAppRow: View {
+    let app: InstalledAppTarget
+    let icon: NSImage
+    let isSelected: Bool
+    let isRunning: Bool
+    let isDark: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 26, height: 26)
+
+            VStack(alignment: .leading, spacing: 1.5) {
+                HStack(spacing: 4) {
+                    Text(app.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if isRunning {
+                        Circle()
+                            .fill(MonitorPalette.emerald)
+                            .frame(width: 5.5, height: 5.5)
+                    }
+                }
+
+                Text(
+                    app.residualSizeBytes > 0
+                        ? L10n.tr(
+                            "残留 \(CleanCandidate.formatBytes(app.residualSizeBytes))",
+                            "+\(CleanCandidate.formatBytes(app.residualSizeBytes)) data"
+                        )
+                        : L10n.tr("无附加残留", "Bundle only")
+                )
+                .font(.system(size: 10, weight: .regular).monospacedDigit())
+                .foregroundStyle(app.residualSizeBytes > 0 ? MonitorPalette.purple : .secondary)
+                .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(CleanCandidate.formatBytes(app.totalSizeBytes))
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 46)
+        .background {
+            if isSelected {
+                Rectangle()
+                    .fill(MonitorPalette.purple.opacity(isDark ? 0.18 : 0.10))
+            } else if isHovered {
+                Rectangle()
+                    .fill(isDark ? Color.white.opacity(0.04) : Color.black.opacity(0.025))
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
+            }
+        }
+        .onTapGesture {
+            onSelect()
+        }
+    }
+}
+
+private struct CleanerResidualRow: View {
+    let item: AppResidualItem
+    let isSelected: Bool
+    let isDark: Bool
+    let onToggle: () -> Void
+    let onReveal: () -> Void
+    let onCopyPath: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let accent = item.kind.accentColor
+
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                .font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(isSelected ? accent : .secondary.opacity(0.65))
+                .frame(width: 18, height: 18)
+
             ZStack {
-                Circle()
-                    .fill(MonitorPalette.emerald.opacity(isDark ? 0.16 : 0.10))
-                    .frame(width: 44, height: 44)
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(MonitorPalette.emerald)
+                RoundedRectangle(cornerRadius: 6.5, style: .continuous)
+                    .fill(accent.opacity(isDark ? 0.18 : 0.11))
+                Image(systemName: item.kind.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
             }
+            .frame(width: 24, height: 24)
 
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            Text(subtitle)
-                .font(.system(size: 11.5, weight: .regular))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-
-            if showScanButton {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(L10n.tr("立即扫描", "Scan Now"))
-                        .font(.system(size: 12, weight: .semibold))
+                    Text(item.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if item.safetyTier == .checkFirst {
+                        Text(item.safetyTier.badgeTitle)
+                            .font(.system(size: 9, weight: .semibold))
+                            .fixedSize(horizontal: true, vertical: false)
+                            .foregroundStyle(MonitorPalette.amber)
+                            .padding(.horizontal, 4.5)
+                            .padding(.vertical, 1)
+                            .background(MonitorPalette.amber.opacity(0.15), in: .capsule)
+                    }
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .frame(height: 30)
-                .background(MonitorPalette.emerald, in: .capsule)
-                .padding(.top, 4)
-                .contentShape(.capsule)
+
+                HStack(spacing: 4) {
+                    Text(item.kind.title)
+                        .font(.system(size: 9, weight: .medium))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 0.5)
+                        .background(accent.opacity(0.13), in: .capsule)
+
+                    Text(item.subtitle)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(CleanCandidate.formatBytes(item.sizeBytes))
+                .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Image(systemName: "folder")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
                 .onTapGesture {
-                    onScan()
+                    onReveal()
                 }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 44)
+        .background(
+            isHovered
+                ? (isDark ? Color.white.opacity(0.035) : Color.black.opacity(0.02))
+                : Color.clear
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Finder .app Drag & Drop Handler
-
-    private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first(where: {
-            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-        }) else {
-            return false
+        .onTapGesture {
+            onToggle()
         }
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            let resolvedURL: URL?
-            if let data = item as? Data {
-                resolvedURL = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let url = item as? URL {
-                resolvedURL = url
-            } else {
-                resolvedURL = nil
+        .contextMenu {
+            Button(
+                isSelected
+                    ? L10n.tr("取消勾选", "Deselect")
+                    : L10n.tr("勾选此项", "Select")
+            ) {
+                onToggle()
             }
-            guard let appURL = resolvedURL else { return }
-            Task { @MainActor in
-                _ = cleaner.handleDroppedAppURL(appURL)
+            Button(L10n.tr("在访达中显示", "Reveal in Finder")) {
+                onReveal()
+            }
+            Button(L10n.tr("复制完整路径", "Copy Path")) {
+                onCopyPath()
             }
         }
-        return true
-    }
-
-    // MARK: - Shared Form Chrome
-
-    private var dividerColor: Color {
-        isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
-    }
-
-    private var borderColor: Color {
-        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
-    }
-
-    private var rowDivider: some View {
-        Rectangle()
-            .fill(dividerColor)
-            .frame(height: 0.5)
     }
 }

@@ -40,7 +40,7 @@ enum AppResidualKind: String, CaseIterable, Sendable, Equatable {
         case .appBundle: L10n.tr("应用本体", "App Bundle")
         case .appSupport: L10n.tr("应用支持", "App Support")
         case .caches: L10n.tr("缓存数据", "Caches")
-        case .containers: L10n.tr("沙盒容器", "Container")
+        case .containers: L10n.tr("沙盒容器", "Containers")
         case .preferences: L10n.tr("偏好设置", "Preferences")
         case .stateAndWeb: L10n.tr("状态与网络", "State & Web")
         case .logs: L10n.tr("诊断日志", "Logs")
@@ -81,8 +81,7 @@ struct AppResidualItem: Identifiable, Equatable, Sendable {
         safetyTier: CleanSafetyTier
     ) {
         let std = url.standardizedFileURL
-        let rawPath = std.path(percentEncoded: false)
-        self.id = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        self.id = CleanRuleEngine.canonicalPath(std)
         self.url = std
         self.kind = kind
         self.title = title
@@ -113,8 +112,7 @@ struct InstalledAppTarget: Identifiable, Equatable, Sendable {
         lastModified: Date? = nil
     ) {
         let std = bundleURL.standardizedFileURL
-        let rawPath = std.path(percentEncoded: false)
-        self.id = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        self.id = CleanRuleEngine.canonicalPath(std)
         self.bundleURL = std
         self.bundleID = bundleID
         self.displayName = displayName
@@ -202,7 +200,7 @@ enum CleanCategory: String, CaseIterable, Identifiable, Sendable {
     var subtitle: String {
         switch self {
         case .appCaches:
-            L10n.tr("应用缓存、日志、崩溃报告与更新包（跳过运行中应用）", "User caches, logs, crash reports & updater leftovers")
+            L10n.tr("应用缓存、日志、崩溃报告与更新包（跳过运行中应用）", "User caches, logs, crash reports & updaters (skips running apps)")
         case .devCaches:
             L10n.tr("Xcode、Simulator、Homebrew、npm / pnpm / Cargo / pip / AI 缓存", "Xcode, Simulator, Homebrew, npm / pnpm / Cargo / pip & AI caches")
         case .staleArtifacts:
@@ -258,12 +256,19 @@ enum CleanStaleThreshold: Int, CaseIterable, Sendable {
     }
 }
 
+/// Language-paired title produced off-MainActor by `CleanRuleEngine` and resolved dynamically via `L10n`.
+struct BilingualTitle: Equatable, Sendable {
+    let zh: String
+    let en: String
+}
+
 /// A single allowlisted file or directory discovered during a scan.
 struct CleanCandidate: Identifiable, Equatable, Sendable {
     let id: String
     let url: URL
     let category: CleanCategory
     let title: String
+    let localizedTitle: BilingualTitle?
     let subtitle: String
     let sizeBytes: UInt64
     let safetyTier: CleanSafetyTier
@@ -273,21 +278,27 @@ struct CleanCandidate: Identifiable, Equatable, Sendable {
         url: URL,
         category: CleanCategory,
         title: String,
+        localizedTitle: BilingualTitle? = nil,
         subtitle: String,
         sizeBytes: UInt64,
         safetyTier: CleanSafetyTier,
         lastModified: Date? = nil
     ) {
         let std = url.standardizedFileURL
-        let rawPath = std.path(percentEncoded: false)
-        self.id = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        self.id = CleanRuleEngine.canonicalPath(std)
         self.url = std
         self.category = category
         self.title = title
+        self.localizedTitle = localizedTitle
         self.subtitle = subtitle
         self.sizeBytes = sizeBytes
         self.safetyTier = safetyTier
         self.lastModified = lastModified
+    }
+
+    var displayTitle: String {
+        guard let localizedTitle else { return title }
+        return L10n.tr(localizedTitle.zh, localizedTitle.en)
     }
 }
 
@@ -305,7 +316,7 @@ struct DiskSpaceSummary: Equatable, Sendable {
         return min(max(Double(usedBytes) / Double(totalBytes), 0), 1)
     }
 
-    static func current(for url: URL = URL(fileURLWithPath: "/")) -> DiskSpaceSummary {
+    nonisolated static func current(for url: URL = URL(fileURLWithPath: "/")) -> DiskSpaceSummary {
         let keys: Set<URLResourceKey> = [
             .volumeTotalCapacityKey,
             .volumeAvailableCapacityForImportantUsageKey,
