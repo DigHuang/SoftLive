@@ -309,8 +309,47 @@ import Testing
             now: now
         )
 
-        // Render idle state (Chinese) at minimum window size (740 x 640) to guarantee zero clipping
-        preferences.language = .zhHans
+        // Render idle state (Chinese & English, Light & Dark) at minimum window size (740 x 640) to guarantee zero clipping
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            for lang in [AppLanguage.zhHans, .en] {
+                preferences.language = lang
+                try assertCleanerPaneRenders(
+                    model: model,
+                    monitor: monitor,
+                    cleaner: cleaner,
+                    preferences: preferences,
+                    state: state,
+                    size: ControlCenterWindow.minWindowSize,
+                    appearanceName: appearance
+                )
+            }
+        }
+
+        // Scan and render populated state across 740x640, 780x680, 900x760 in ZH & EN, Light & Dark
+        cleaner.performSynchronousScan(environment: env)
+        #expect(cleaner.candidates.count == 5)
+        #expect(cleaner.selectedCount == 4)
+
+        for size in [ControlCenterWindow.minWindowSize, ControlCenterWindow.defaultSize, NSSize(width: 900, height: 760)] {
+            for lang in [AppLanguage.zhHans, .en] {
+                preferences.language = lang
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    try assertCleanerPaneRenders(
+                        model: model,
+                        monitor: monitor,
+                        cleaner: cleaner,
+                        preferences: preferences,
+                        state: state,
+                        size: size,
+                        appearanceName: appearance
+                    )
+                }
+            }
+        }
+
+        // Render invalid-drop error banner in Mode 1 at minimum size
+        cleaner.inspectDroppedAppURL(tempHome.appending(path: "NotAnApp.txt"))
+        #expect(cleaner.dropErrorMessage != nil)
         try assertCleanerPaneRenders(
             model: model,
             monitor: monitor,
@@ -319,30 +358,7 @@ import Testing
             state: state,
             size: ControlCenterWindow.minWindowSize
         )
-
-        // Scan and render populated state (Chinese & English, default & resized)
-        cleaner.performSynchronousScan(environment: env)
-        #expect(cleaner.candidates.count == 5)
-        #expect(cleaner.selectedCount == 4)
-
-        try assertCleanerPaneRenders(
-            model: model,
-            monitor: monitor,
-            cleaner: cleaner,
-            preferences: preferences,
-            state: state,
-            size: ControlCenterWindow.defaultSize
-        )
-
-        preferences.language = .en
-        try assertCleanerPaneRenders(
-            model: model,
-            monitor: monitor,
-            cleaner: cleaner,
-            preferences: preferences,
-            state: state,
-            size: NSSize(width: 900, height: 760)
-        )
+        cleaner.clearDropError()
 
         // Render partial-trash failure banner (`skippedCount > 0`) at minimum window size across languages
         struct MockTrashError: Error {}
@@ -365,6 +381,27 @@ import Testing
             size: ControlCenterWindow.minWindowSize
         )
         preferences.language = .zhHans
+        try assertCleanerPaneRenders(
+            model: model,
+            monitor: monitor,
+            cleaner: cleaner,
+            preferences: preferences,
+            state: state,
+            size: ControlCenterWindow.minWindowSize
+        )
+
+        // Render "All Clear" empty state after trashing remaining candidates
+        cleaner.selectSafeDefaults()
+        if cleaner.selectedCount > 0 {
+            cleaner.trashSelected(environment: env) { url in try fm.removeItem(at: url) }
+        }
+        for remaining in cleaner.candidates where !cleaner.selectedIDs.contains(remaining.id) {
+            cleaner.toggleCandidate(remaining.id)
+        }
+        if cleaner.selectedCount > 0 {
+            cleaner.trashSelected(environment: env) { url in try fm.removeItem(at: url) }
+        }
+        #expect(cleaner.candidates.isEmpty)
         try assertCleanerPaneRenders(
             model: model,
             monitor: monitor,
@@ -462,7 +499,7 @@ import Testing
         // Group Container is `.checkFirst`, so 5 `.safe` items are pre-selected by default
         #expect(cleaner.selectedAppItemCount == 5)
 
-        // Render App Uninstaller workspace in Chinese and English
+        // Render App Uninstaller workspace across sizes, languages, and Light/Dark modes
         cleaner.mode = .appUninstall
         let model = PlaybackModel(sources: [])
         let monitor = SystemMonitor(preferences: preferences)
@@ -470,16 +507,27 @@ import Testing
         state.isOpen = true
         state.selectedSection = .cleaner
 
-        preferences.language = .zhHans
-        try assertCleanerPaneRenders(
-            model: model,
-            monitor: monitor,
-            cleaner: cleaner,
-            preferences: preferences,
-            state: state,
-            size: ControlCenterWindow.defaultSize
-        )
-        preferences.language = .en
+        for size in [ControlCenterWindow.minWindowSize, ControlCenterWindow.defaultSize, NSSize(width: 900, height: 760)] {
+            for lang in [AppLanguage.zhHans, .en] {
+                preferences.language = lang
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    try assertCleanerPaneRenders(
+                        model: model,
+                        monitor: monitor,
+                        cleaner: cleaner,
+                        preferences: preferences,
+                        state: state,
+                        size: size,
+                        appearanceName: appearance
+                    )
+                }
+            }
+        }
+
+        // Step A: Test "Reset Data Only" (`selectAppResidualsOnly`) — unchecks `.appBundle`, trashes 4 safe Library items
+        cleaner.selectAppResidualsOnly()
+        #expect(!cleaner.isSelectedAppBundleChecked)
+        #expect(cleaner.selectedAppItemCount == 4)
         try assertCleanerPaneRenders(
             model: model,
             monitor: monitor,
@@ -488,11 +536,6 @@ import Testing
             state: state,
             size: ControlCenterWindow.minWindowSize
         )
-
-        // Step A: Test "Reset Data Only" (`selectAppResidualsOnly`) — unchecks `.appBundle`, trashes 4 safe Library items
-        cleaner.selectAppResidualsOnly()
-        #expect(!cleaner.isSelectedAppBundleChecked)
-        #expect(cleaner.selectedAppItemCount == 4)
 
         let resetReport = cleaner.trashSelectedAppItems(
             homeDirectory: tempHome,
@@ -836,17 +879,29 @@ import Testing
         #expect(cleaner.selectedIDs.contains(docsItem.id)) // newly arrived .safe item selected
         #expect(!cleaner.selectedIDs.contains(dmgItem.id)) // newly arrived .checkFirst item stays unchecked
 
-        // 4. VER-10: Long bundleID in App Uninstaller hero header renders cleanly alongside non-truncating size suffix
+        // 4. VER-10: Long bundleID in App Uninstaller hero header renders cleanly alongside all 8 residual groups
+        let claudeBundleID = "com.anthropic.claudefordesktop.helper.very.long.identifier"
         _ = try createMockAppBundle(
             in: tempApps,
             bundleName: "Claude.app",
-            bundleID: "com.anthropic.claudefordesktop.helper.very.long.identifier",
+            bundleID: claudeBundleID,
             displayName: "Claude",
             version: "1.2.3",
             binaryBytes: 128 * 1024
         )
+        try writeSizedFile(in: tempHome.appending(path: "Library/Application Support/Claude", directoryHint: .isDirectory), name: "db.sqlite", bytes: 64 * 1024, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Caches/\(claudeBundleID)", directoryHint: .isDirectory), name: "c.bin", bytes: 32 * 1024, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Containers/\(claudeBundleID)", directoryHint: .isDirectory), name: "box.dat", bytes: 32 * 1024, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Preferences", directoryHint: .isDirectory), name: "\(claudeBundleID).plist", bytes: 4096, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Saved Application State/\(claudeBundleID).savedState", directoryHint: .isDirectory), name: "win.data", bytes: 8192, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Logs/Claude", directoryHint: .isDirectory), name: "main.log", bytes: 8192, mtime: now)
+        try writeSizedFile(in: tempHome.appending(path: "Library/Group Containers/group.\(claudeBundleID)", directoryHint: .isDirectory), name: "g.db", bytes: 16 * 1024, mtime: now)
+
         cleaner.performSynchronousAppScan(homeDirectory: tempHome, applicationDirectories: [tempApps])
         cleaner.mode = .appUninstall
+        let claudeTarget = try #require(cleaner.selectedApp)
+        #expect(Set(claudeTarget.residuals.map(\.kind)).count == AppResidualKind.allCases.count)
+
         let model = PlaybackModel(sources: [])
         let monitor = SystemMonitor(preferences: preferences)
         let state = ControlCenterState()
@@ -854,23 +909,37 @@ import Testing
         state.selectedSection = .cleaner
 
         preferences.language = .en
-        try assertCleanerPaneRenders(
-            model: model,
-            monitor: monitor,
-            cleaner: cleaner,
-            preferences: preferences,
-            state: state,
-            size: ControlCenterWindow.minWindowSize
-        )
+        #expect(CleanSafetyTier.checkFirst.badgeTitle == "Check First")
+        #expect(CleanSortOrder.ageDesc.displayName == "Oldest")
+        for size in [ControlCenterWindow.minWindowSize, ControlCenterWindow.defaultSize, NSSize(width: 900, height: 760)] {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                try assertCleanerPaneRenders(
+                    model: model,
+                    monitor: monitor,
+                    cleaner: cleaner,
+                    preferences: preferences,
+                    state: state,
+                    size: size,
+                    appearanceName: appearance
+                )
+            }
+        }
         preferences.language = .zhHans
-        try assertCleanerPaneRenders(
-            model: model,
-            monitor: monitor,
-            cleaner: cleaner,
-            preferences: preferences,
-            state: state,
-            size: ControlCenterWindow.defaultSize
-        )
+        #expect(CleanSafetyTier.checkFirst.badgeTitle == "需核对")
+        #expect(CleanSortOrder.ageDesc.displayName == "最久未动")
+        for size in [ControlCenterWindow.minWindowSize, ControlCenterWindow.defaultSize, NSSize(width: 900, height: 760)] {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                try assertCleanerPaneRenders(
+                    model: model,
+                    monitor: monitor,
+                    cleaner: cleaner,
+                    preferences: preferences,
+                    state: state,
+                    size: size,
+                    appearanceName: appearance
+                )
+            }
+        }
     }
 
     private func assertCleanerPaneRenders(
@@ -879,7 +948,8 @@ import Testing
         cleaner: DiskCleaner,
         preferences: Preferences,
         state: ControlCenterState,
-        size: NSSize = ControlCenterWindow.defaultSize
+        size: NSSize = ControlCenterWindow.defaultSize,
+        appearanceName: NSAppearance.Name = .aqua
     ) throws {
         state.windowSize = size
         let window = NSWindow(
@@ -888,6 +958,7 @@ import Testing
             backing: .buffered,
             defer: false
         )
+        window.appearance = NSAppearance(named: appearanceName)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         let host = NSHostingView(
