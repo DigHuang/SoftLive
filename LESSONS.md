@@ -84,6 +84,10 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 2026-11-08，在 `StageWindow` 内部的顶部/底部 HUD 上套用 `.glassEffect(.regular)`，且未给窗口固定 `darkAqua` 外观。由于 `.glassEffect` 底层采样的是窗口背后的桌面/其他浅色窗口而非同窗口内的深色 `StageCanvasView`，在系统浅色外观下把深色舞台上的 HUD 渲染成发白发灰的塑料条；同时外层胶囊使用非等距内边距（`horizontal: 8, vertical: 5`）包内层亮色胶囊、左上角胶囊内又叠一层带描边圆钮，再加切歌按钮误用快进图标 `forward.fill`（`⏩`），导致 5 处视觉比例失调。改为窗口固定 `darkAqua`、舞台内部 HUD 使用深色半透明层与等距 `4 pt` 共心内边距、切歌统一用 `forward.end.fill`（`⏭`）。
 - 出现 1 次。
 
+**在 macOS 26 上，SwiftUI `Picker(.menu)`（尤其含 `Label` 图标与 `.tint`）会将弹出菜单向左上偏移并覆盖触发按钮、把选项文字染成强调色；必须用原生 `NSMenu.popUp` 在翻转坐标系向下留 `6 pt` 精确对齐边缘，并用 `screencapture -R` 实屏区域截图核对展开后的 `NSMenu` 浮窗。**
+- 2026-11-23，配置中心的 `Picker(.menu).fixedSize()` 在「首选播放器」带图标选项上实机展开时向左上错位，把底层网易云红色图标上沿与末尾字母露出到菜单外框之外，同时整页 `.tint` 将下拉触发文字染成强调色且暗青强调色（`#0D7894`）与系统原生蓝色菜单高亮并存突兀。改用 `FrostDropdown`（AppKit `isFlipped` 覆盖层 + `NSMenu.popUp(positioning: nil, at: bounds.height + 6, in:)` 右对齐边缘），并将 [`SoftLiveTheme.accent`](Sources/SoftLive/UI/Theme/SoftLiveTheme.swift) 与 [`MonitorStatusBar`](Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 统一为 `NSColor.controlAccentColor`、`detailPane` 取消整页 `.tint`；首轮 `4 pt` 间距在 Liquid Glass 圆角描边下仍偏紧，经 `screencapture -R` 展开截图逐像素复核后微调至 `6 pt`。
+- 出现 1 次。
+
 **检查小尺寸透明图形时，不要把“必须存在 Alpha = 255 的像素”当成有效渲染的条件。**
 - 2026-11-07 导出第二轮 logo 的 16 px PNG 时，验证脚本要求透明通道极值精确为 `(0, 255)`，误拒绝了经过抗锯齿的细线和小圆点。小图中的形状可能没有覆盖任何一个完整像素；应分别检查尺寸、透明背景、非空内容，并在实际尺寸下核对清晰度。本轮已修正检查，且明确记录波形与点阵方向在 16 px 下的细节损失。
 - 出现 1 次。

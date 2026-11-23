@@ -173,26 +173,26 @@ struct DesktopLyricsView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
             .padding(.bottom, 12)
             .frame(width: Self.cardWidth, height: Self.cardHeight)
             .background {
                 Group {
                     if showsControls {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
                                 .fill(Color.black.opacity(0.24))
                             Color.clear
-                                .glassEffect(.regular, in: .rect(cornerRadius: 22))
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
                                 .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
                         }
                     } else {
                         Color.clear
                     }
                 }
-                .contentShape(.rect(cornerRadius: 22))
+                .contentShape(.rect(cornerRadius: 24))
                 .onTapGesture(count: 2) {
                     model.nextTrack()
                 }
@@ -229,77 +229,93 @@ struct DesktopLyricsView: View {
             Spacer(minLength: 8)
 
             if model.lyrics != nil {
-                HStack(spacing: 4) {
-                    offsetPill("-0.5s", help: L10n.tr("歌词延后 0.5 秒", "Delay lyrics by 0.5s")) {
-                        model.offset -= Self.offsetStep
-                    }
-                    if model.offset != 0 {
-                        offsetPill(
-                            String(format: "%+.1fs", model.offset),
-                            isHighlighted: true,
-                            help: L10n.tr("点击重置歌词偏移", "Click to reset lyrics offset")
-                        ) {
-                            model.offset = 0
-                        }
-                    }
-                    offsetPill("+0.5s", help: L10n.tr("歌词提前 0.5 秒", "Advance lyrics by 0.5s")) {
-                        model.offset += Self.offsetStep
-                    }
-                }
+                offsetStepper
             }
 
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 barButton(
                     icon: model.isPlaying ? "pause.fill" : "play.fill",
+                    opticalOffsetX: model.isPlaying ? 0 : 1,
                     help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Play"),
                     action: model.togglePlayPause
                 )
                 barButton(
-                    icon: preferences.desktopLyricsLocked ? "lock.fill" : "lock.open.fill",
+                    icon: preferences.desktopLyricsLocked ? "cursorarrow.motionlines" : "cursorarrow",
                     help: preferences.desktopLyricsLocked
                         ? L10n.tr("已开启穿透（按住 ⌘ 移入唤醒；点击改为普通悬停唤醒）", "Click-through enabled (Hold ⌘ to wake; click to wake on normal hover)")
                         : L10n.tr("已解锁（点击开启鼠标穿透）", "Unlocked (Click to enable click-through)")
                 ) {
                     preferences.desktopLyricsLocked.toggle()
                 }
-                barButton(icon: "xmark", help: L10n.tr("隐藏桌面歌词", "Hide Desktop Lyrics")) {
+                barButton(icon: "eye.slash", help: L10n.tr("隐藏桌面歌词", "Hide Desktop Lyrics")) {
                     interaction.isAwake = false
                     preferences.showsDesktopLyrics = false
                 }
             }
         }
-        .frame(height: 28)
+        .frame(height: 26)
     }
 
-    private func offsetPill(
-        _ title: String,
-        isHighlighted: Bool = false,
-        help: String,
-        action: @escaping () -> Void
-    ) -> some View {
+    private var offsetStepper: some View {
+        HStack(spacing: 0) {
+            stepperAdjustButton("-0.5s", help: L10n.tr("歌词延后 0.5 秒", "Delay lyrics by 0.5s")) {
+                model.offset -= Self.offsetStep
+            }
+
+            if model.offset != 0 {
+                Text(String(format: "%+.1fs", model.offset))
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 7)
+                    .frame(height: 20)
+                    .background(SoftLiveTheme.accent, in: .capsule)
+                    .contentShape(.capsule)
+                    .help(L10n.tr("点击重置歌词偏移", "Click to reset lyrics offset"))
+                    .onTapGesture {
+                        model.offset = 0
+                    }
+            } else {
+                Rectangle()
+                    .fill(.white.opacity(0.16))
+                    .frame(width: 0.5, height: 12)
+            }
+
+            stepperAdjustButton("+0.5s", help: L10n.tr("歌词提前 0.5 秒", "Advance lyrics by 0.5s")) {
+                model.offset += Self.offsetStep
+            }
+        }
+        .padding(.horizontal, 3)
+        .frame(height: 26)
+        .background(.white.opacity(0.14), in: .capsule)
+        .overlay {
+            Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
+        }
+    }
+
+    private func stepperAdjustButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
         Text(title)
-            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-            .foregroundStyle(isHighlighted ? .black : .white.opacity(0.88))
+            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.88))
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
-            .frame(height: 22)
-            .background(
-                isHighlighted ? Color.white.opacity(0.88) : Color.white.opacity(0.14),
-                in: .capsule
-            )
-            .overlay {
-                Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
-            }
-            .contentShape(.capsule)
+            .frame(height: 26)
+            .contentShape(Rectangle())
             .help(help)
             .onTapGesture(perform: action)
     }
 
-    private func barButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
+    private func barButton(
+        icon: String,
+        opticalOffsetX: CGFloat = 0,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Image(systemName: icon)
-            .font(.system(size: 11, weight: .bold))
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.white.opacity(0.94))
-            .frame(width: 28, height: 28)
+            .offset(x: opticalOffsetX)
+            .frame(width: 26, height: 26)
             .background(.white.opacity(0.14), in: .circle)
             .overlay {
                 Circle().strokeBorder(.white.opacity(0.16), lineWidth: 0.5)

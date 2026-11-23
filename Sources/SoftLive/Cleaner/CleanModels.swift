@@ -15,13 +15,6 @@ enum CleanerMode: String, CaseIterable, Identifiable, Sendable {
             L10n.tr("应用卸载", "App Uninstaller")
         }
     }
-
-    var icon: String {
-        switch self {
-        case .junkClean: "sparkles"
-        case .appUninstall: "square.stack.3d.up.fill"
-        }
-    }
 }
 
 /// Classification of files associated with an installed application.
@@ -45,19 +38,6 @@ enum AppResidualKind: String, CaseIterable, Sendable, Equatable {
         case .stateAndWeb: L10n.tr("状态与网络", "State & Web")
         case .logs: L10n.tr("诊断日志", "Logs")
         case .sharedAndAgents: L10n.tr("共享与启动项", "Shared & Agents")
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .appBundle: "app.badge.fill"
-        case .appSupport: "folder.fill"
-        case .caches: "internaldrive"
-        case .containers: "cube.box.fill"
-        case .preferences: "slider.horizontal.3"
-        case .stateAndWeb: "window.ceiling"
-        case .logs: "doc.text.fill"
-        case .sharedAndAgents: "link.circle.fill"
         }
     }
 }
@@ -157,7 +137,7 @@ enum CleanSafetyTier: String, CaseIterable, Sendable, Equatable {
     var badgeTitle: String {
         switch self {
         case .safe: L10n.tr("安全清理", "Safe")
-        case .checkFirst: L10n.tr("建议核对", "Check First")
+        case .checkFirst: L10n.tr("需核对", "Check First")
         }
     }
 }
@@ -191,9 +171,9 @@ enum CleanCategory: String, CaseIterable, Identifiable, Sendable {
         case .devCaches:
             L10n.tr("开发与包", "Dev & Pkgs")
         case .staleArtifacts:
-            L10n.tr("项目构建", "Builds")
+            L10n.tr("构建产物", "Builds")
         case .leftoversAndInstallers:
-            L10n.tr("残留与安装包", "Leftovers")
+            L10n.tr("残留", "Leftovers")
         }
     }
 
@@ -209,15 +189,6 @@ enum CleanCategory: String, CaseIterable, Identifiable, Sendable {
             L10n.tr("已卸载应用的孤立数据目录与下载区旧安装包（DMG / PKG / ZIP）", "Orphaned app leftovers & old Downloads installers")
         }
     }
-
-    var icon: String {
-        switch self {
-        case .appCaches: "internaldrive"
-        case .devCaches: "hammer.fill"
-        case .staleArtifacts: "folder.fill.badge.gearshape"
-        case .leftoversAndInstallers: "archivebox.fill"
-        }
-    }
 }
 
 /// Sort order for discovered cleanup candidates.
@@ -231,7 +202,7 @@ enum CleanSortOrder: String, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .sizeDesc: L10n.tr("按体积", "By Size")
-        case .ageDesc: L10n.tr("按时间", "Oldest")
+        case .ageDesc: L10n.tr("最久未动", "Oldest")
         case .nameAsc: L10n.tr("按名称", "By Name")
         }
     }

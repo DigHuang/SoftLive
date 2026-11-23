@@ -5,7 +5,7 @@
 - [`StageWindow`](../../Sources/SoftLive/UI/Stage/StageWindow.swift) 是独立 `.nonactivatingPanel`，由 `Preferences.showsStageWindow` 控制显示，默认关闭。宿主负责首击、拖动、右键主菜单与位置保存，SwiftUI 控制栏通过 `PlaybackModel` 发起播放控制。
 - [`StageCanvasView`](../../Sources/SoftLive/UI/Stage/StageCanvasView.swift) 接收歌词、播放锚点、偏移、风格与封面，编排图层和动画。不直接读取播放器、请求网络或推进播放状态。
 - [`StagePalette`](../../Sources/SoftLive/UI/Stage/StagePalette.swift) 将封面降采样后提取背景、光球与强调色，`StagePalette.cached(for:)` 使用弱键多条目缓存供舞台与桌面组件共用（跳过透明像素，并保持黑白灰封面中性低饱和度），无封面时使用默认色盘。
-- 窗口固定使用 `darkAqua` 外观；悬浮控制采用四角无底栏布局（左上关闭/缩放圆钮、右上共心胶囊风格分段器、左下无底框封面与曲目、右下播放/暂停圆钮），支持双击舞台区域切下一首与 `⌘W` 关闭并同步偏好，恢复位置与缩放时钳制到当前已连接屏幕可见区域（且最大化期间不覆盖窗口化保存尺寸），无封面时复用 [`BrandAssets.syncTemplate`](../../Sources/SoftLive/UI/Branding/BrandAssets.swift)。
+- 窗口固定使用 `darkAqua` 外观（不透明画布内部 HUD 不使用 `.glassEffect`，改为融合封面暗色调的黑曜石半透明材质与 `0.5 pt` 霜光描边）；悬浮控制采用 `16 pt` 外边距的四角无底栏布局，与 `26 pt` 窗口圆角和 `10 pt` 封面圆角保持共心比例：左上 `32 × 32 pt` 关闭/缩放圆钮（`13 pt .medium`），右上为 `32 pt` 高的 `流光 | 描金` 分段胶囊与间隔 `8 pt` 的独立 `32 pt` 星火开关胶囊（`sparkle` 图标），左下无底框封面与曲目，右下 `32 × 32 pt` 播放/暂停圆钮（`play.fill` 带 `+1 pt` 视觉居中微调）。支持双击舞台区域切下一首与 `⌘W` 关闭并同步偏好，恢复位置与缩放时钳制到当前已连接屏幕可见区域（且最大化期间不覆盖窗口化保存尺寸），无封面时复用 [`BrandAssets.syncTemplate`](../../Sources/SoftLive/UI/Branding/BrandAssets.swift)。
 - 两种 `StageStyle` 及星火开关由 [`Preferences`](../../Sources/SoftLive/App/Preferences.swift) 持久化。
 
 渲染内部按职责拆分，各 helper 不持有视图或读取其私有状态：

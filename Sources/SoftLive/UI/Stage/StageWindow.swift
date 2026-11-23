@@ -5,7 +5,7 @@ import SwiftUI
 /// Standalone showcase stage window ("演示舞台模式"):
 /// fluid album-tinted aurora backdrop, two hardware-accelerated kinetic typography styles
 /// (`流光`, `描金`), radial spark bursts, vinyl interlude centerpiece,
-/// and hover-revealed Liquid Glass HUD controls.
+/// and hover-revealed dark obsidian HUD controls.
 final class StageWindow: NSPanel {
     static let defaultSize = NSSize(width: 920, height: 580)
     static let minWindowSize = NSSize(width: 680, height: 440)
@@ -265,7 +265,7 @@ struct StageWindowView: View {
                         .opacity(showHUD ? 1 : 0)
                         .allowsHitTesting(showHUD)
                 }
-                .padding(18)
+                .padding(16)
             }
             .clipShape(.rect(cornerRadius: 26))
             .overlay {
@@ -288,9 +288,15 @@ struct StageWindowView: View {
         HStack(spacing: 10) {
             // Top-left: clean standalone window action circles without double-nested capsule borders or verbose text.
             HStack(spacing: 8) {
-                hudCircleButton(icon: "xmark", help: L10n.tr("关闭演示舞台", "Close Stage Window"), action: onClose)
+                hudCircleButton(
+                    icon: "xmark",
+                    palette: palette,
+                    help: L10n.tr("关闭演示舞台", "Close Stage Window"),
+                    action: onClose
+                )
                 hudCircleButton(
                     icon: windowState.isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                    palette: palette,
                     help: windowState.isZoomed ? L10n.tr("还原舞台窗口", "Restore Stage Window") : L10n.tr("切换最大化舞台", "Toggle Maximize Stage"),
                     action: onToggleZoom
                 )
@@ -298,67 +304,56 @@ struct StageWindowView: View {
 
             Spacer(minLength: 0)
 
-            // Top-right: uniform 4pt inset segmented capsule with monochrome frost selection.
-            HStack(spacing: 2) {
-                ForEach(StageStyle.allCases, id: \.self) { style in
-                    let isSelected = preferences.stageStyle == style
-                    Text(style.displayName)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? .white : .white.opacity(0.60))
-                        .padding(.horizontal, 12)
-                        .frame(height: 26)
-                        .background {
-                            if isSelected {
-                                Capsule()
-                                    .fill(.white.opacity(0.18))
-                                    .overlay {
-                                        Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 0.5)
-                                    }
+            // Top-right: 32pt segmented style capsule separated by 8pt from standalone Sparks toggle pill.
+            HStack(spacing: 8) {
+                HStack(spacing: 2) {
+                    ForEach(StageStyle.allCases, id: \.self) { style in
+                        let isSelected = preferences.stageStyle == style
+                        Text(style.displayName)
+                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? .white : .white.opacity(0.62))
+                            .padding(.horizontal, 12)
+                            .frame(height: 26)
+                            .background {
+                                if isSelected {
+                                    Capsule()
+                                        .fill(.white.opacity(0.18))
+                                }
                             }
-                        }
-                        .contentShape(.capsule)
-                        .help(style.subtitle)
-                        .onTapGesture {
-                            preferences.stageStyle = style
-                        }
-                }
-
-                Rectangle()
-                    .fill(.white.opacity(0.14))
-                    .frame(width: 0.5, height: 14)
-                    .padding(.horizontal, 4)
-
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(
-                            preferences.stageSparks
-                                ? Color(nsColor: palette.accent)
-                                : .white.opacity(0.50)
-                        )
-                    Text(L10n.tr("星火", "Sparks"))
-                        .font(.system(size: 12, weight: preferences.stageSparks ? .semibold : .medium))
-                        .foregroundStyle(preferences.stageSparks ? .white : .white.opacity(0.55))
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background {
-                    if preferences.stageSparks {
-                        Capsule()
-                            .fill(.white.opacity(0.14))
-                            .overlay {
-                                Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+                            .contentShape(.capsule)
+                            .help(style.subtitle)
+                            .onTapGesture {
+                                preferences.stageStyle = style
                             }
                     }
                 }
-                .contentShape(.capsule)
-                .help(L10n.tr("切换星火粒子特效", "Toggle Spark Particles"))
-                .onTapGesture {
-                    preferences.stageSparks.toggle()
-                }
+                .padding(3)
+                .background { hudSurface(in: Capsule(), palette: palette) }
+
+                sparksTogglePill(palette: palette)
             }
-            .padding(4)
-            .background { hudSurface(in: Capsule()) }
+        }
+    }
+
+    private func sparksTogglePill(palette: StagePalette) -> some View {
+        let isEnabled = preferences.stageSparks
+        let accent = Color(nsColor: palette.accent)
+
+        return HStack(spacing: 5) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(isEnabled ? accent : .white.opacity(0.56))
+            Text(L10n.tr("星火", "Sparks"))
+                .font(.system(size: 12, weight: isEnabled ? .semibold : .medium))
+                .foregroundStyle(isEnabled ? .white : .white.opacity(0.58))
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background { hudSurface(in: Capsule(), palette: palette, isHighlighted: isEnabled) }
+        .contentShape(.capsule)
+        .help(L10n.tr("切换星火粒子特效", "Toggle Spark Particles"))
+        .onTapGesture {
+            preferences.stageSparks.toggle()
         }
     }
 
@@ -388,9 +383,9 @@ struct StageWindowView: View {
                     }
                 }
                 .frame(width: 38, height: 38)
-                .clipShape(.rect(cornerRadius: 9))
+                .clipShape(.rect(cornerRadius: 10))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(.white.opacity(0.16), lineWidth: 0.5)
                 }
                 .shadow(color: .black.opacity(0.32), radius: 8, y: 3)
@@ -416,6 +411,8 @@ struct StageWindowView: View {
 
             hudCircleButton(
                 icon: model.isPlaying ? "pause.fill" : "play.fill",
+                opticalOffsetX: model.isPlaying ? 0 : 1,
+                palette: palette,
                 help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("播放", "Play")
             ) {
                 if model.playback != nil {
@@ -427,25 +424,55 @@ struct StageWindowView: View {
         }
     }
 
-    private func hudSurface<S: InsettableShape>(in shape: S) -> some View {
-        shape
-            .fill(Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.68))
-            .overlay {
-                shape.strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+    private func hudSurface<S: InsettableShape>(
+        in shape: S,
+        palette: StagePalette,
+        isHighlighted: Bool = false
+    ) -> some View {
+        let obsidianTint = Color(nsColor: palette.backgroundTop)
+        let accent = Color(nsColor: palette.accent)
+        return ZStack {
+            shape.fill(Color(red: 0.035, green: 0.04, blue: 0.055).opacity(0.58))
+            shape.fill(obsidianTint.opacity(0.36))
+            shape.fill(
+                LinearGradient(
+                    colors: [accent.opacity(0.07), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            if isHighlighted {
+                shape.fill(accent.opacity(0.14))
             }
-            .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+        }
+        .overlay {
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: isHighlighted
+                        ? [accent.opacity(0.42), Color.white.opacity(0.24), accent.opacity(0.22)]
+                        : [Color.white.opacity(0.24), accent.opacity(0.16), Color.white.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 0.5
+            )
+        }
+        .shadow(color: .black.opacity(0.30), radius: 10, y: 4)
     }
 
     private func hudCircleButton(
         icon: String,
+        opticalOffsetX: CGFloat = 0,
+        palette: StagePalette,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
         Image(systemName: icon)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.88))
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white.opacity(0.90))
+            .offset(x: opticalOffsetX)
             .frame(width: 32, height: 32)
-            .background { hudSurface(in: Circle()) }
+            .background { hudSurface(in: Circle(), palette: palette) }
             .contentShape(.circle)
             .help(help)
             .onTapGesture(perform: action)

@@ -32,22 +32,24 @@
 
 ## 运行路径
 
-1. **两阶段渐进式并发扫描、后台移入废纸篓与即时取消**：首次切换到「清理」页或切换顶部「缓存与残留 / 应用卸载」模式时，在后台执行扫描（`CleanEnvironment` 发现、回收站移动及拖入解析均在后台执行，不阻塞 `MainActor`）；关闭配置中心或重扫时通过 `CleanCancellationToken` 立即中止目录与 `fts_read` 遍历。
-   - **Stage 1（零 TCC 路径即时出结果）**：`DiskCleaner.scan()` 先调用 `CleanRuleEngine.scanNonProtected(environment:cancelToken:)`，通过 `DispatchQueue.concurrentPerform` 并发扫描 `~/Library` 缓存/日志/残留、开发工具缓存与 `~/Developer`、`~/Projects`、`~/Code`、`~/Work`，立即结束主加载态并填充 4 张分类卡片与候选列表。
-   - **Stage 2（独立异步扫描受 TCC 保护目录）**：Stage 1 发布后，再启动两个互不阻塞的独立后台任务分别调用 `CleanRuleEngine.scanDocumentsGitHub(environment:cancelToken:)` 与 `CleanRuleEngine.scanDownloadsInstallers(environment:cancelToken:)`（`Info.plist` 与 `Resources/{zh-Hans,en}.lproj/InfoPlist.strings` 已声明 `NSDocumentsFolderUsageDescription` 与 `NSDownloadsFolderUsageDescription`）；任一目录就绪后即通过 `DiskCleaner.mergeProtectedScanResults(_:)` 增量去重并入列表，且保留用户对 Stage 1 条目的手动勾选状态。若系统授权弹窗待确认，Stage 1 结果与清理操作不受阻塞。
+1. **两阶段渐进式并发扫描、后台移入废纸篓与即时取消**：首次切换到「清理」页或通过顶部原生分段控件切换「缓存与残留 / 应用卸载」模式时，在后台执行扫描（`CleanEnvironment` 发现、回收站移动及拖入解析均在后台执行，不阻塞 `MainActor`）；关闭配置中心或重扫时通过 `CleanCancellationToken` 立即中止目录与 `fts_read` 遍历。
+   - **单一承载容器与零跳动对齐**：两个模式共用 `y = 28 pt` 顶部标题栏与 `y = 50 pt` 上沿的 `SoftLiveTheme.surface` 主容器（`0.5 pt` `SoftLiveTheme.hairline` 描边），与配置中心其余分页保持像素级对齐。
+   - **Stage 1（零 TCC 路径即时出结果）**：`DiskCleaner.scan()` 先调用 `CleanRuleEngine.scanNonProtected(environment:cancelToken:)`，通过 `DispatchQueue.concurrentPerform` 并发扫描 `~/Library` 缓存/日志/残留、开发工具缓存与 `~/Developer`、`~/Projects`、`~/Code`、`~/Work`，立即结束主加载态并更新顶部双色卷容条、分类文本筛选标签及候选列表。
+   - **Stage 2（独立异步扫描受 TCC 保护目录）**：Stage 1 发布后，再启动两个互不阻塞的独立后台任务分别调用 `CleanRuleEngine.scanDocumentsGitHub(environment:cancelToken:)` 与 `CleanRuleEngine.scanDownloadsInstallers(environment:cancelToken:)`（`Info.plist` 与 `Resources/{zh-Hans,en}.lproj/InfoPlist.strings` 已声明 `NSDocumentsFolderUsageDescription` 与 `NSDownloadsFolderUsageDescription`）；任一目录就绪后即通过 `DiskCleaner.mergeProtectedScanResults(_:)` 增量去重并入列表，底部操作栏以非阻塞小菊花提示「正在检查文稿与下载目录…」，且保留用户对 Stage 1 条目的手动勾选状态。若系统授权弹窗待确认，Stage 1 结果与清理操作不受阻塞。
    - **POSIX `fts_open` 物理块统计与硬链接去重**：`CleanRuleEngine.directoryMetrics(at:cancelToken:)` 使用 `fts_open(..., FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil)` 遍历目录，按 `st_blocks * 512` 统计真实物理分配字节（稀疏空洞与 iCloud 占位文件记为 `0`），并对 `st_nlink > 1` 的硬链接文件（如 pnpm / Bun 虚拟存储）按 `st_ino` 去重。
    - **动态双语标题解析**：扫描引擎通过 [`BilingualTitle`](../../Sources/SoftLive/Cleaner/CleanModels.swift) 产出中英文标题对，界面按 [`CleanCandidate.displayTitle`](../../Sources/SoftLive/Cleaner/CleanModels.swift) 在 `MainActor` 经 `L10n.tr` 实时解析，切换界面语言无需重扫。
-2. **Finder `.app` 拖拽直达（`.onDrop`）**：在「清理」页任意区域拖入 `.app` 应用包，自动调用 `DiskCleaner.inspectDroppedAppURL(_:)` 在后台校验并拆解应用本体与关联文件，并在应用列表扫描后保留外部拖入条目；若拖入系统应用、SoftLive 自身或无效包则显示明确提示。
+2. **Finder `.app` 拖拽直达（`.onDrop`）**：在「清理」页任意区域拖入 `.app` 应用包，自动调用 `DiskCleaner.inspectDroppedAppURL(_:)` 在后台校验并拆解应用本体与关联文件，并在应用列表扫描后保留外部拖入条目；若拖入系统应用、SoftLive 自身或无效包则在底部状态栏显示明确提示。
 3. **完整卸载 vs 仅重置应用数据**：
-   - 在「应用卸载」右侧详情卡可一键切换 **「完整卸载」**（勾选 `.app` 本体 + 安全关联项）或 **「仅清数据」**（取消勾选 `.app` 本体，仅清理 `~/Library` 关联缓存与数据，保留应用本身）。
+   - 在「应用卸载」主从分栏左侧列表（`216 pt`）按总占用、关联数据或名称筛选已安装应用；右侧详情页按 [`AppResidualKind`](../../Sources/SoftLive/Cleaner/CleanModels.swift) 8 类分组展示关联文件，可一键切换 **「完整卸载」**（勾选 `.app` 本体 + 安全关联项）或 **「仅清数据」**（取消勾选 `.app` 本体，仅清理 `~/Library` 关联缓存与数据，保留应用本身），并通过底部二次确认 Crimson 按钮移入废纸篓。
    - 执行时若目标应用正在运行，先通过 `NSRunningApplication.terminate()` 请求优雅退出并短暂等待进程结束；若仍未退出则经 `AppUninstallEngine.canSafelyTrash` 拦截并记入 `skippedCount`，未退出前不删除文件。
 
 ## 约束与失败行为
 
 - **符号链接全链路隔离（不使用 `NSDirectoryEnumerator.skipDescendants()`）**：`CleanRuleEngine.isStrictDescendant(_:ofAnyRoot:)` 同时校验词法路径与 `resolvingSymlinksInPath()`，防止中间父目录符号链接逃逸出白名单；`fts_open` 启用 `FTS_PHYSICAL` 从内核/C 库层保证绝不穿透符号链接；不能在 `FileManager.default.enumerator` 遇到叶子符号链接（如 `node_modules/.bin/*`）时调用 `skipDescendants()`，否则 `NSDirectoryEnumerator` 会直接跳过父目录的剩余兄弟节点导致整个 `node_modules` 统计为 `0 KB`。
 - **单次计费原则**：`~/Library/Caches` 下的 `Homebrew`、`pnpm`、`Yarn`、`bun`、`mise`、`org.swift.swiftpm`、`pip`、`uv`、`pypoetry`、`CocoaPods`、`go-build`、`typescript`、`ms-playwright`、`Cypress` 仅归入 `devCaches`，在 `appCaches` 扫描中显式跳过。
-- **权限或占用失败回退与提示**：若个别目录因系统保护、文件锁或应用拒绝退出导致校验失败或 `trashItem` 抛出错误，计入 `CleanSummaryReport.skippedCount` 并继续处理其余勾选项，并在界面提示已移入数量、释放体积与跳过项数。
+- **权限或占用失败回退与提示**：若个别目录因系统保护、文件锁或应用拒绝退出导致校验失败或 `trashItem` 抛出错误，计入 `CleanSummaryReport.skippedCount` 并继续处理其余勾选项，并在底部操作栏提示已移入数量、释放体积与跳过项数。
 
 ## 验证
 
 - `swift test --filter DiskCleanerTests`
+- `swift test --filter KaraokeLayerViewTests`（核对配置中心切换标签时首卡片顶部对齐 `firstCardTopRows` 零跳动）

@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import SwiftUI
 import Testing
 @testable import SoftLive
 
@@ -57,7 +58,7 @@ import Testing
         #expect(SystemMetrics.formatCompactRate(UInt64(12.3 * 1_073_741_824)) == "12 GB")
     }
 
-    @Test func rendersColoredStatusBarImageWithVerticalBars() {
+    @Test func rendersStatusBarImageMonochromeByDefaultAndTintsOnAlertBreach() {
         let metrics = SystemMetrics(
             cpuUsage: 0.24,
             memoryUsage: 0.78,
@@ -65,44 +66,88 @@ import Testing
             uploadBytesPerSec: 64 * 1024,
             downloadBytesPerSec: 3 * 1_048_576
         )
-        let image = MonitorStatusBar.renderImage(for: metrics)
-        #expect(!image.isTemplate)
-        #expect(image.size == NSSize(width: 52, height: 22))
-        #expect(image.tiffRepresentation != nil)
-
-        let compactImage = MonitorStatusBar.renderImage(for: metrics, style: .barsOnly)
-        #expect(compactImage.size == NSSize(width: 20, height: 22))
-        #expect(!compactImage.isTemplate)
 
         let monoImage = MonitorStatusBar.renderImage(for: metrics, coloredBars: false)
         #expect(monoImage.isTemplate)
+        #expect(MonitorStatusBar.fullWidth == 52)
+        #expect(monoImage.size == NSSize(width: MonitorStatusBar.fullWidth, height: 22))
+        #expect(monoImage.tiffRepresentation != nil)
+
+        let coloredImage = MonitorStatusBar.renderImage(for: metrics, coloredBars: true)
+        #expect(!coloredImage.isTemplate)
+        #expect(coloredImage.size == NSSize(width: MonitorStatusBar.fullWidth, height: 22))
+
+        let compactImage = MonitorStatusBar.renderImage(for: metrics, style: .barsOnly, coloredBars: false)
+        #expect(compactImage.size == NSSize(width: MonitorStatusBar.barsOnlyWidth, height: 22))
+        #expect(compactImage.isTemplate)
+
         #expect(
             MonitorStatusBar.DisplayKey(metrics: metrics, coloredBars: true)
                 != MonitorStatusBar.DisplayKey(metrics: metrics, coloredBars: false)
         )
 
+        // Monochrome mode keeps template rendering until a metric breaches its alert threshold.
+        let monoCPUAlert = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(cpuUsage: 0.85),
+            coloredBars: false
+        )
+        #expect(monoCPUAlert.cpuTone == .critical)
+        #expect(!monoCPUAlert.isTemplate)
+        #expect(!MonitorStatusBar.renderImage(for: SystemMetrics(cpuUsage: 0.85), coloredBars: false).isTemplate)
+
+        let monoRAMAlert = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(memoryUsage: 0.86),
+            coloredBars: false
+        )
+        #expect(monoRAMAlert.ramTone == .warning)
+        #expect(!monoRAMAlert.isTemplate)
+
+        let monoCriticalPressure = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(memoryUsage: 0.60, memoryPressure: .critical),
+            coloredBars: false
+        )
+        #expect(monoCriticalPressure.ramTone == .critical)
+        #expect(!monoCriticalPressure.isTemplate)
+
+        let monoTempAlert = MonitorStatusBar.DisplayKey(
+            metrics: SystemMetrics(temperatureCelsius: 74.0),
+            coloredBars: false
+        )
+        #expect(monoTempAlert.tmpTone == .critical)
+        #expect(!monoTempAlert.isTemplate)
+
         // Crossing color thresholds within the same integer bar-height step must produce distinct DisplayKeys.
-        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.795))
-        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.805))
+        let cpuBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.795), coloredBars: false)
+        let cpuAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.805), coloredBars: false)
         #expect(cpuBelow.cpuBarSteps == cpuAbove.cpuBarSteps)
         #expect(cpuBelow != cpuAbove)
 
         let customThresholdHit = MonitorStatusBar.DisplayKey(
             metrics: SystemMetrics(cpuUsage: 0.72),
+            coloredBars: false,
             cpuThreshold: MonitorCPUAlertThreshold.low.fraction
         )
-        #expect(customThresholdHit.cpuHigh)
+        #expect(customThresholdHit.cpuTone == .critical)
 
-        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.84))
-        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.86))
-        #expect(ramBelow.ramBarSteps != ramAbove.ramBarSteps || ramBelow != ramAbove)
-        #expect(!ramBelow.ramWarning)
-        #expect(ramAbove.ramWarning)
+        let ramBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.84), coloredBars: false)
+        let ramAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(memoryUsage: 0.86), coloredBars: false)
+        #expect(ramBelow.ramTone == .monochrome)
+        #expect(ramAbove.ramTone == .warning)
+        #expect(ramBelow != ramAbove)
 
-        let tmpBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 54.0))
-        let tmpAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 55.5))
-        #expect(tmpBelow.tmpBarSteps == tmpAbove.tmpBarSteps)
-        #expect(tmpBelow != tmpAbove)
+        let tmpColoredBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 61.9), coloredBars: true)
+        let tmpColoredAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 62.1), coloredBars: true)
+        #expect(tmpColoredBelow.tmpBarSteps == tmpColoredAbove.tmpBarSteps)
+        #expect(tmpColoredBelow.tmpTone == .accent)
+        #expect(tmpColoredAbove.tmpTone == .warning)
+        #expect(tmpColoredBelow != tmpColoredAbove)
+
+        let tmpMonoBelow = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 71.5), coloredBars: false)
+        let tmpMonoAbove = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(temperatureCelsius: 72.5), coloredBars: false)
+        #expect(tmpMonoBelow.tmpBarSteps == tmpMonoAbove.tmpBarSteps)
+        #expect(tmpMonoBelow.tmpTone == .monochrome)
+        #expect(tmpMonoAbove.tmpTone == .critical)
+        #expect(tmpMonoBelow != tmpMonoAbove)
 
         // Crossing the 0.01 bar-visibility threshold must produce distinct DisplayKeys.
         let hiddenBar = MonitorStatusBar.DisplayKey(metrics: SystemMetrics(cpuUsage: 0.005))
@@ -110,6 +155,48 @@ import Testing
         #expect(hiddenBar.cpuBarSteps == 0)
         #expect(visibleBar.cpuBarSteps == 1)
         #expect(hiddenBar != visibleBar)
+
+        // Tooltip formats live bilingual summary.
+        L10n.language = .en
+        defer { L10n.language = .system }
+        let enTip = MonitorStatusBar.tooltipText(for: metrics)
+        #expect(enTip == "CPU 24% · RAM 78% · Temp 44.0 °C · ↑ 64 KB/s ↓ 3.0 MB/s")
+        L10n.language = .zhHans
+        let zhTip = MonitorStatusBar.tooltipText(for: metrics)
+        #expect(zhTip == "CPU 24% · RAM 78% · 温度 44.0 °C · ↑ 64 KB/s ↓ 3.0 MB/s")
+    }
+
+    @Test func rendersMonitorPopoverAcrossAllTabsAndLanguages() throws {
+        let suiteName = "dev.softlive.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            L10n.language = .system
+        }
+
+        let prefs = Preferences(defaults: defaults)
+        let monitor = SystemMonitor(preferences: prefs)
+        monitor.setDetailActive(true)
+        defer { monitor.setDetailActive(false) }
+
+        for lang in [AppLanguage.zhHans, .en] {
+            prefs.language = lang
+            for tab in MonitorTab.allCases {
+                monitor.setActiveTab(tab)
+                let host = NSHostingView(
+                    rootView: MonitorPopoverView(
+                        monitor: monitor,
+                        preferences: prefs,
+                        onOpenSettings: {}
+                    )
+                )
+                host.frame = NSRect(origin: .zero, size: MonitorPopoverView.panelSize)
+                host.layoutSubtreeIfNeeded()
+                let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: rep)
+                #expect(rep.pixelsWide >= Int(MonitorPopoverView.panelSize.width))
+            }
+        }
     }
 
     @Test func disablesAndReenablesSystemMonitorCleanly() async {

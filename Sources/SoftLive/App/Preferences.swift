@@ -58,8 +58,8 @@ enum DesktopLyricsSublineMode: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .translationThenNext: L10n.tr("翻译优先", "Trans. First")
-        case .translationOnly: L10n.tr("仅翻译", "Trans. Only")
+        case .translationThenNext: L10n.tr("翻译优先", "Translation First")
+        case .translationOnly: L10n.tr("仅翻译", "Translation Only")
         case .singleLine: L10n.tr("单行", "Single Line")
         }
     }
@@ -72,9 +72,9 @@ enum StatusBarWidthPreset: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .compact: "180 pt"
-        case .standard: "260 pt"
-        case .wide: "340 pt"
+        case .compact: L10n.tr("紧凑 (180 pt)", "Compact (180 pt)")
+        case .standard: L10n.tr("标准 (260 pt)", "Standard (260 pt)")
+        case .wide: L10n.tr("宽幅 (340 pt)", "Wide (340 pt)")
         }
     }
 
@@ -213,7 +213,7 @@ final class Preferences {
             Key.stageSparks: true,
             Key.player: PlayerKind.netEase.rawValue,
             Key.monitorStyle: MonitorStatusBarStyle.rateAndBars.rawValue,
-            Key.monitorColoredBars: true,
+            Key.monitorColoredBars: false,
             Key.monitorDefaultTab: MonitorTab.cpu.rawValue,
             Key.monitorInterval: MonitorSampleInterval.standard.rawValue,
             Key.monitorCPUAlert: MonitorCPUAlertThreshold.standard.rawValue,

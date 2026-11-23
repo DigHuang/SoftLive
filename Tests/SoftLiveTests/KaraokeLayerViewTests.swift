@@ -479,4 +479,86 @@ struct KaraokeLayerViewTests {
         #expect(clamped.size == minSize)
         #expect(screens[0].contains(clamped))
     }
+
+    @Test func resolvesOverlayAndStageSystemSymbolsAndRendersActiveOffsetsAcrossAppearances() async throws {
+        final class PreviewSource: PlayerSource {
+            let kind: PlayerKind = .netEase
+            var state: PlaybackState?
+            var onChange: (() -> Void)?
+            func start() { onChange?() }
+            func artwork(for track: Track) async -> NSImage? { nil }
+        }
+
+        let requiredSymbols = [
+            "cursorarrow.motionlines",
+            "cursorarrow",
+            "eye.slash",
+            "stop.fill",
+            "sparkle",
+            "play.fill",
+            "pause.fill",
+        ]
+        for name in requiredSymbols {
+            #expect(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil)
+        }
+
+        let suiteName = "SoftLiveOverlayAppearanceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let preferences = Preferences(defaults: defaults)
+        preferences.showsDesktopWidget = true
+        preferences.showsDesktopLyrics = true
+
+        let track = Track(id: "preview-1", title: "测试曲目", artist: "歌手", album: "", duration: 215, source: .netEase)
+        let source = PreviewSource()
+        source.state = PlaybackState(track: track, isPlaying: false, position: 42, at: .now)
+        let lyrics = Lyrics(lines: [
+            LyricLine(time: 40, text: "第一句测试歌词", translation: "First test line"),
+        ])
+        let lyricsService = LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { _ in lyrics },
+                netEaseMatch: { _ in lyrics },
+                lrcLibMatch: { _ in nil }
+            )
+        )
+        let model = PlaybackModel(sources: [source], lyricsService: lyricsService)
+        model.start()
+        for _ in 0..<20 where model.lyrics == nil {
+            await Task.yield()
+        }
+        #expect(model.lyrics != nil)
+        model.offset = 0.5
+
+        let interaction = LyricsInteraction()
+        interaction.isAwake = true
+
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = NSAppearance(named: appearanceName)
+
+            preferences.desktopLyricsLocked = false
+            let lyricsHost = NSHostingView(
+                rootView: DesktopLyricsView(model: model, preferences: preferences, interaction: interaction)
+            )
+            lyricsHost.appearance = appearance
+            lyricsHost.frame = NSRect(origin: .zero, size: DesktopLyricsView.panelSize)
+            lyricsHost.layoutSubtreeIfNeeded()
+            let lyricsRep = try #require(lyricsHost.bitmapImageRepForCachingDisplay(in: lyricsHost.bounds))
+            lyricsHost.cacheDisplay(in: lyricsHost.bounds, to: lyricsRep)
+            #expect(lyricsRep.pixelsWide >= Int(DesktopLyricsView.panelSize.width))
+
+            preferences.preferredPlayer = .appleMusic
+            let widgetHost = NSHostingView(
+                rootView: DesktopWidgetView(model: model, preferences: preferences)
+            )
+            widgetHost.appearance = appearance
+            widgetHost.frame = NSRect(origin: .zero, size: DesktopWidgetView.panelSize)
+            widgetHost.layoutSubtreeIfNeeded()
+            let widgetRep = try #require(widgetHost.bitmapImageRepForCachingDisplay(in: widgetHost.bounds))
+            widgetHost.cacheDisplay(in: widgetHost.bounds, to: widgetRep)
+            #expect(widgetRep.pixelsWide >= Int(DesktopWidgetView.panelSize.width))
+        }
+    }
 }
