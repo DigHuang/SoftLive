@@ -365,7 +365,6 @@ struct ControlCenterView: View {
                 scrollableSection { aboutProductView }
             }
         }
-        .tint(SoftLiveTheme.accent)
     }
 
     private func scrollableSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -384,14 +383,13 @@ struct ControlCenterView: View {
     private var playerSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
             formGroup(title: L10n.tr("音源与状态栏", "Source & Status Bar")) {
-                formRow(L10n.tr("首选播放器", "Preferred Player")) {
-                    menuPicker(
-                        options: PlayerKind.allCases,
-                        selection: binding(\.preferredPlayer),
-                        label: { $0.displayName },
-                        icon: { $0.icon }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("首选播放器", "Preferred Player"),
+                    options: PlayerKind.allCases,
+                    selection: binding(\.preferredPlayer),
+                    label: { $0.displayName },
+                    icon: { $0.icon }
+                )
 
                 rowDivider
 
@@ -403,13 +401,12 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow(L10n.tr("状态栏最大宽度", "Status Bar Max Width")) {
-                    menuPicker(
-                        options: StatusBarWidthPreset.allCases,
-                        selection: binding(\.statusBarWidthPreset),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("状态栏最大宽度", "Status Bar Max Width"),
+                    options: StatusBarWidthPreset.allCases,
+                    selection: binding(\.statusBarWidthPreset),
+                    label: { $0.displayName }
+                )
             }
 
             formGroup(title: L10n.tr("桌面悬浮歌词", "Desktop Lyrics")) {
@@ -424,23 +421,21 @@ struct ControlCenterView: View {
 
                 rowDivider
 
-                formRow(L10n.tr("歌词字号", "Font Size")) {
-                    menuPicker(
-                        options: DesktopLyricsSize.allCases,
-                        selection: binding(\.desktopLyricsSize),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("歌词字号", "Font Size"),
+                    options: DesktopLyricsSize.allCases,
+                    selection: binding(\.desktopLyricsSize),
+                    label: { $0.displayName }
+                )
 
                 rowDivider
 
-                formRow(L10n.tr("副句内容", "Subline Mode")) {
-                    menuPicker(
-                        options: DesktopLyricsSublineMode.allCases,
-                        selection: binding(\.desktopLyricsSublineMode),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("副句内容", "Subline Mode"),
+                    options: DesktopLyricsSublineMode.allCases,
+                    selection: binding(\.desktopLyricsSublineMode),
+                    label: { $0.displayName }
+                )
             }
 
             formGroup(title: L10n.tr("演示舞台", "Stage Mode")) {
@@ -496,43 +491,39 @@ struct ControlCenterView: View {
             }
 
             formGroup(title: L10n.tr("采样与告警阈值", "Sampling & Alert Thresholds")) {
-                formRow(L10n.tr("采样间隔", "Refresh Interval")) {
-                    menuPicker(
-                        options: MonitorSampleInterval.allCases,
-                        selection: binding(\.monitorSampleInterval),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("采样间隔", "Refresh Interval"),
+                    options: MonitorSampleInterval.allCases,
+                    selection: binding(\.monitorSampleInterval),
+                    label: { $0.displayName }
+                )
 
                 rowDivider
 
-                formRow(L10n.tr("CPU 告警阈值", "CPU Alert Threshold")) {
-                    menuPicker(
-                        options: MonitorCPUAlertThreshold.allCases,
-                        selection: binding(\.monitorCPUAlertThreshold),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("CPU 告警阈值", "CPU Alert Threshold"),
+                    options: MonitorCPUAlertThreshold.allCases,
+                    selection: binding(\.monitorCPUAlertThreshold),
+                    label: { $0.displayName }
+                )
 
                 rowDivider
 
-                formRow(L10n.tr("内存告警阈值", "RAM Alert Threshold")) {
-                    menuPicker(
-                        options: MonitorRAMAlertThreshold.allCases,
-                        selection: binding(\.monitorRAMAlertThreshold),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("内存告警阈值", "RAM Alert Threshold"),
+                    options: MonitorRAMAlertThreshold.allCases,
+                    selection: binding(\.monitorRAMAlertThreshold),
+                    label: { $0.displayName }
+                )
 
                 rowDivider
 
-                formRow(L10n.tr("温度告警阈值", "Temp Alert Threshold")) {
-                    menuPicker(
-                        options: MonitorThermalAlertThreshold.allCases,
-                        selection: binding(\.monitorThermalAlertThreshold),
-                        label: { $0.displayName }
-                    )
-                }
+                menuPickerRow(
+                    L10n.tr("温度告警阈值", "Temp Alert Threshold"),
+                    options: MonitorThermalAlertThreshold.allCases,
+                    selection: binding(\.monitorThermalAlertThreshold),
+                    label: { $0.displayName }
+                )
             }
         }
     }
@@ -710,30 +701,64 @@ struct ControlCenterView: View {
         .frame(height: 42)
     }
 
-    private func menuPicker<Option: Hashable>(
+    private func menuPickerRow<Option: Hashable>(
+        _ title: String,
         options: [Option],
         selection: Binding<Option>,
         label: @escaping (Option) -> String,
         icon: ((Option) -> NSImage?)? = nil
     ) -> some View {
-        Picker("", selection: selection) {
-            ForEach(options, id: \.self) { option in
-                if let iconImage = icon?(option) {
-                    Label {
-                        Text(label(option))
-                    } icon: {
-                        Image(nsImage: Self.menuIcon(for: iconImage))
-                    }
-                    .tag(option)
-                } else {
-                    Text(label(option))
-                        .tag(option)
-                }
+        formRow(title) {
+            menuPicker(
+                options: options,
+                selection: selection,
+                label: label,
+                icon: icon,
+                accessibilityTitle: title
+            )
+        }
+    }
+
+    private func menuPicker<Option: Hashable>(
+        options: [Option],
+        selection: Binding<Option>,
+        label: @escaping (Option) -> String,
+        icon: ((Option) -> NSImage?)? = nil,
+        accessibilityTitle: String? = nil
+    ) -> some View {
+        let current = selection.wrappedValue
+        let entries: [FrostMenuEntry] = options.map { option in
+            .item(
+                title: label(option),
+                image: icon?(option),
+                isSelected: option == current
+            ) {
+                selection.wrappedValue = option
             }
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
+
+        return FrostDropdown(
+            entries: entries,
+            chrome: .controlCenter,
+            alignment: .trailing,
+            indicator: .picker,
+            accessibilityLabel: accessibilityTitle,
+            accessibilityValue: label(current)
+        ) {
+            HStack(spacing: 6) {
+                if let iconImage = icon?(current) {
+                    Image(nsImage: iconImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 15, height: 15)
+                }
+                Text(label(current))
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+        }
     }
 
     private func segmentedControlPicker<Option: Hashable>(
@@ -759,11 +784,5 @@ struct ControlCenterView: View {
             get: { preferences[keyPath: keyPath] },
             set: { preferences[keyPath: keyPath] = $0 }
         )
-    }
-
-    private static func menuIcon(for image: NSImage) -> NSImage {
-        let copy = image.copy() as? NSImage ?? image
-        copy.size = NSSize(width: 16, height: 16)
-        return copy
     }
 }

@@ -226,10 +226,7 @@ final class MonitorStatusBar: NSObject {
         .paragraphStyle: rightParagraphStyle,
     ]
 
-    private static let frostAccent = adaptiveColor(
-        light: (0.05, 0.47, 0.58),
-        dark: (0.36, 0.80, 0.92)
-    )
+    private static let frostAccent = SoftLiveTheme.accentNSColor
     private static let frostWarning = adaptiveColor(
         light: (0.70, 0.40, 0.02),
         dark: (0.96, 0.72, 0.24)

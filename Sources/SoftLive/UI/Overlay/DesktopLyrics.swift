@@ -112,8 +112,6 @@ struct DesktopLyricsView: View {
     let preferences: Preferences
     let interaction: LyricsInteraction
 
-    @Environment(\.colorScheme) private var colorScheme
-
     private var activeLine: LyricLine {
         if let line = model.currentLine, !line.text.isEmpty { return line }
         return LyricLine(time: 0, text: model.headline)
@@ -267,7 +265,7 @@ struct DesktopLyricsView: View {
             if model.offset != 0 {
                 Text(String(format: "%+.1fs", model.offset))
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(colorScheme == .dark ? Color.black.opacity(0.88) : .white)
+                    .foregroundStyle(.white)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 7)
                     .frame(height: 20)

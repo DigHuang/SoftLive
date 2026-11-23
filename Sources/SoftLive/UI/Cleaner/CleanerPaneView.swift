@@ -342,25 +342,28 @@ struct CleanerPaneView: View {
     }
 
     private var staleThresholdMenu: some View {
-        Menu {
-            ForEach(CleanStaleThreshold.allCases, id: \.self) { option in
-                Button {
-                    guard preferences.cleanStaleThreshold != option else { return }
-                    confirmingTrash = false
-                    preferences.cleanStaleThreshold = option
-                    if cleaner.lastScanDate != nil && !cleaner.isScanning && !cleaner.isCleaning {
-                        cleaner.scan()
-                    }
-                } label: {
-                    HStack {
-                        Text(L10n.tr("闲置超过 \(option.displayName)", "Stale > \(option.displayName)"))
-                        if option == preferences.cleanStaleThreshold {
-                            Image(systemName: "checkmark")
-                        }
-                    }
+        let entries: [FrostMenuEntry] = CleanStaleThreshold.allCases.map { option in
+            .item(
+                title: L10n.tr("闲置超过 \(option.displayName)", "Stale > \(option.displayName)"),
+                isSelected: option == preferences.cleanStaleThreshold
+            ) {
+                guard preferences.cleanStaleThreshold != option else { return }
+                confirmingTrash = false
+                preferences.cleanStaleThreshold = option
+                if cleaner.lastScanDate != nil && !cleaner.isScanning && !cleaner.isCleaning {
+                    cleaner.scan()
                 }
             }
-        } label: {
+        }
+
+        return FrostDropdown(
+            entries: entries,
+            chrome: .toolbar(height: 24),
+            alignment: .trailing,
+            indicator: .picker,
+            accessibilityLabel: L10n.tr("闲置时间阈值", "Stale Threshold"),
+            accessibilityValue: preferences.cleanStaleThreshold.displayName
+        ) {
             Text(
                 L10n.tr(
                     "闲置 > \(preferences.cleanStaleThreshold.displayName)",
@@ -368,8 +371,9 @@ struct CleanerPaneView: View {
                 )
             )
             .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .foregroundStyle(.primary)
+            .lineLimit(1)
         }
-        .cleanerToolbarMenuChrome(height: 24)
     }
 
     private var scopeFilterStrip: some View {
@@ -428,76 +432,87 @@ struct CleanerPaneView: View {
 
             Spacer(minLength: 4)
 
-            Menu {
-                ForEach(CleanTierFilter.allCases) { option in
-                    Button {
+            FrostDropdown(
+                entries: CleanTierFilter.allCases.map { option in
+                    .item(
+                        title: option.menuTitle,
+                        isSelected: tierFilter == option
+                    ) {
                         withAnimation(.snappy(duration: 0.14)) {
                             tierFilter = option
                         }
-                    } label: {
-                        HStack {
-                            Text(option.menuTitle)
-                            if tierFilter == option {
-                                Image(systemName: "checkmark")
-                            }
-                        }
                     }
-                }
-            } label: {
+                },
+                chrome: .toolbar(height: 26),
+                alignment: .trailing,
+                indicator: .picker,
+                accessibilityLabel: L10n.tr("安全等级筛选", "Safety Filter"),
+                accessibilityValue: tierFilter.buttonTitle
+            ) {
                 Text(tierFilter.buttonTitle)
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
-            .cleanerToolbarMenuChrome(height: 26)
 
-            Menu {
-                ForEach(CleanSortOrder.allCases) { option in
-                    Button {
+            FrostDropdown(
+                entries: CleanSortOrder.allCases.map { option in
+                    .item(
+                        title: option.displayName,
+                        isSelected: sortOrder == option
+                    ) {
                         sortOrder = option
-                    } label: {
-                        HStack {
-                            Text(option.displayName)
-                            if sortOrder == option {
-                                Image(systemName: "checkmark")
-                            }
-                        }
                     }
-                }
-            } label: {
+                },
+                chrome: .toolbar(height: 26),
+                alignment: .trailing,
+                indicator: .picker,
+                accessibilityLabel: L10n.tr("排序方式", "Sort Order"),
+                accessibilityValue: sortOrder.displayName
+            ) {
                 Text(sortOrder.displayName)
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
-            .cleanerToolbarMenuChrome(height: 26)
 
-            Menu {
-                Button(L10n.tr("全选当前", "Select All Shown")) {
-                    confirmingTrash = false
-                    for item in displayedCandidates where !cleaner.selectedIDs.contains(item.id) {
-                        cleaner.toggleCandidate(item.id)
-                    }
-                }
-                .disabled(displayedCandidates.isEmpty)
-
-                Button(L10n.tr("仅选安全项", "Select Safe Only")) {
-                    confirmingTrash = false
-                    cleaner.selectSafeDefaults()
-                }
-                .disabled(cleaner.candidates.isEmpty)
-
-                Divider()
-
-                Button(L10n.tr("取消全选", "Deselect All")) {
-                    confirmingTrash = false
-                    cleaner.deselectAll()
-                }
-                .disabled(cleaner.selectedCount == 0)
-            } label: {
+            FrostDropdown(
+                entries: [
+                    .item(
+                        title: L10n.tr("全选当前", "Select All Shown"),
+                        isEnabled: !displayedCandidates.isEmpty
+                    ) {
+                        confirmingTrash = false
+                        for item in displayedCandidates where !cleaner.selectedIDs.contains(item.id) {
+                            cleaner.toggleCandidate(item.id)
+                        }
+                    },
+                    .item(
+                        title: L10n.tr("仅选安全项", "Select Safe Only"),
+                        isEnabled: !cleaner.candidates.isEmpty
+                    ) {
+                        confirmingTrash = false
+                        cleaner.selectSafeDefaults()
+                    },
+                    .separator,
+                    .item(
+                        title: L10n.tr("取消全选", "Deselect All"),
+                        isEnabled: cleaner.selectedCount > 0
+                    ) {
+                        confirmingTrash = false
+                        cleaner.deselectAll()
+                    },
+                ],
+                chrome: .borderless(height: 26),
+                alignment: .trailing,
+                indicator: .menu,
+                accessibilityLabel: L10n.tr("批量选择", "Selection Actions")
+            ) {
                 Text(L10n.tr("选择", "Select"))
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .padding(.horizontal, 6)
-            .frame(height: 26)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -540,7 +555,7 @@ struct CleanerPaneView: View {
                         .padding(.horizontal, 16)
                         .frame(height: 28)
                         .background {
-                            solidButtonFill(SoftLiveTheme.accent, darkOpacity: 0.62, cornerRadius: 7)
+                            solidButtonFill(SoftLiveTheme.accent, darkOpacity: 0.88, cornerRadius: 7)
                         }
                 }
                 .buttonStyle(.plain)
@@ -742,30 +757,26 @@ struct CleanerPaneView: View {
                     text: $appSearchQuery
                 )
 
-                Menu {
-                    ForEach(AppListSortOrder.allCases) { option in
-                        Button {
+                FrostDropdown(
+                    entries: AppListSortOrder.allCases.map { option in
+                        .item(
+                            title: option.title,
+                            isSelected: appSortOrder == option
+                        ) {
                             appSortOrder = option
-                        } label: {
-                            HStack {
-                                Text(option.title)
-                                if appSortOrder == option {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
                         }
-                    }
-                } label: {
+                    },
+                    chrome: .iconSquare(size: 26),
+                    alignment: .trailing,
+                    indicator: .none,
+                    accessibilityLabel: L10n.tr("应用排序", "Sort Apps"),
+                    accessibilityValue: appSortOrder.title,
+                    toolTip: L10n.tr("排序：\(appSortOrder.title)", "Sort: \(appSortOrder.title)")
+                ) {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .frame(width: 26, height: 26)
-                .insetWellChrome(cornerRadius: 6.5)
-                .help(L10n.tr("排序：\(appSortOrder.title)", "Sort: \(appSortOrder.title)"))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -1686,14 +1697,6 @@ private extension View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(SoftLiveTheme.hairline, lineWidth: 0.5)
         }
-    }
-
-    func cleanerToolbarMenuChrome(height: CGFloat) -> some View {
-        menuStyle(.borderlessButton)
-            .fixedSize()
-            .padding(.horizontal, 9)
-            .frame(height: height)
-            .insetWellChrome(cornerRadius: 6.5)
     }
 
     func cleanerRowContextMenu(

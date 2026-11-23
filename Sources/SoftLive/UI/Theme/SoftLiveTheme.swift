@@ -5,11 +5,11 @@ import SwiftUI
 enum SoftLiveTheme {
     private typealias RGB = (r: CGFloat, g: CGFloat, b: CGFloat)
 
-    private static let accentLight: RGB = (0.05, 0.47, 0.58)
-    private static let accentDark: RGB = (0.36, 0.80, 0.92)
+    /// Shared AppKit accent color aligned with macOS appearance and `NSMenu` selection highlight.
+    static let accentNSColor: NSColor = .controlAccentColor
 
-    /// Signature Frost Teal-Cyan derived from the Sync icon (`#0D7894` light / `#5CCCEB` dark).
-    static let accent = adaptive(light: accentLight, dark: accentDark)
+    /// Adaptive system accent color (`NSColor.controlAccentColor`, harmonious with native menus and controls).
+    static let accent = Color(nsColor: accentNSColor)
 
     /// Muted Warm Amber for warnings, thermal warmth, `Check First`, and `Running`.
     static let warning = adaptive(
@@ -38,15 +38,26 @@ enum SoftLiveTheme {
     /// Recessed plate fill inside glass popovers, segmented tracks, and headers.
     static let insetWell = adaptivePrimary(lightAlpha: 0.04, darkAlpha: 0.055)
 
+    /// Hover fill for compact interactive pills and menu triggers.
+    static let controlHover = adaptivePrimary(lightAlpha: 0.075, darkAlpha: 0.095)
+
+    /// Pressed or open-menu fill for compact interactive pills and menu triggers.
+    static let controlActive = adaptivePrimary(lightAlpha: 0.11, darkAlpha: 0.14)
+
     /// Crisp `0.5 pt` divider and border stroke color.
     static let hairline = adaptivePrimary(lightAlpha: 0.08, darkAlpha: 0.10)
 
-    /// Active row, pill, and scope highlight fill tinted with `accent`.
-    static let selectionFill = adaptive(
-        light: accentLight,
-        dark: accentDark,
-        lightAlpha: 0.11,
-        darkAlpha: 0.18
+    /// Active row, pill, and scope highlight fill derived dynamically from `accentNSColor`.
+    static let selectionFill = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let alpha: CGFloat = isDark ? 0.18 : 0.10
+            var resolved = accentNSColor
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = accentNSColor.usingColorSpace(.sRGB) ?? accentNSColor
+            }
+            return resolved.withAlphaComponent(alpha)
+        }
     )
 
     /// Three-state CPU load color matching user alert thresholds.
