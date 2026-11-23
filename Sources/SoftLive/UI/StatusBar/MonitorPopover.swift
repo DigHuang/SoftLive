@@ -1,67 +1,6 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Adaptive Semantic Palette (Light & Dark Mode)
-
-enum MonitorPalette {
-    static let cyan = adaptive(light: (0.00, 0.48, 1.00), dark: (0.22, 0.74, 0.97))     // #007AFF / #38BDF8
-    static let indigo = adaptive(light: (0.35, 0.34, 0.84), dark: (0.51, 0.55, 0.97))   // #5856D6 / #818CF8
-    static let purple = adaptive(light: (0.69, 0.32, 0.87), dark: (0.75, 0.52, 0.99))   // #AF52DE / #C084FC
-    static let emerald = adaptive(light: (0.06, 0.65, 0.50), dark: (0.20, 0.83, 0.60))  // #10B981 / #34D399
-    static let teal = adaptive(light: (0.05, 0.58, 0.53), dark: (0.18, 0.83, 0.75))     // #0D9488 / #2DD4BF
-    static let amber = adaptive(light: (0.72, 0.38, 0.00), dark: (0.98, 0.75, 0.14))    // #B86100 / #FBBF24
-    static let orange = adaptive(light: (1.00, 0.42, 0.00), dark: (0.98, 0.57, 0.24))   // #FF6B00 / #FB923C
-    static let coral = adaptive(light: (0.94, 0.27, 0.27), dark: (0.97, 0.44, 0.44))    // #EF4444 / #F87171
-
-    private static func adaptive(
-        light: (CGFloat, CGFloat, CGFloat),
-        dark: (CGFloat, CGFloat, CGFloat)
-    ) -> Color {
-        Color(
-            nsColor: NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                let rgb = isDark ? dark : light
-                return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
-            }
-        )
-    }
-
-    static func cpuColor(
-        _ usage: Double,
-        threshold: Double = MonitorCPUAlertThreshold.standard.fraction
-    ) -> Color {
-        usage >= threshold ? orange : cyan
-    }
-
-    /// Primary visual theme for the RAM tab (hero value, sparkline, and process bars).
-    static func ramThemeColor(pressure: MemoryPressureLevel) -> Color {
-        pressure == .critical ? coral : indigo
-    }
-
-    /// Semantic status color for the memory pressure badge and tab indicator dot.
-    static func ramPressureColor(
-        usage: Double,
-        pressure: MemoryPressureLevel,
-        alertThreshold: Double = MonitorRAMAlertThreshold.standard.fraction
-    ) -> Color {
-        switch pressure {
-        case .critical: coral
-        case .warning: amber
-        case .normal: usage >= alertThreshold ? amber : emerald
-        }
-    }
-
-    static func thermalColor(
-        _ celsius: Double?,
-        alertThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
-    ) -> Color {
-        guard let celsius else { return teal }
-        if celsius >= alertThreshold { return coral }
-        if celsius >= 55 { return amber }
-        return teal
-    }
-}
-
 // MARK: - Main Popover View (macOS 26+ Liquid Glass)
 
 struct MonitorPopoverView: View {
