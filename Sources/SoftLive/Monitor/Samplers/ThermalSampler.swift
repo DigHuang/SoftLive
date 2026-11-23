@@ -13,9 +13,7 @@ final class ThermalSampler {
     private static let temperatureLevelField: Int32 = 15 << 16
     private static let sampleStride = 3
 
-    private struct NamedSensor {
-        let name: String
-        let label: String
+    private struct DieSensor {
         let order: Int
         let service: CFTypeRef
     }
@@ -25,7 +23,7 @@ final class ThermalSampler {
     private let getFloatValue: GetFloatValueFn?
     private let smcSampler = SMCSampler()
     private var primarySensor: CFTypeRef?
-    private var dieSensors: [NamedSensor] = []
+    private var dieSensors: [DieSensor] = []
     private var nandSensor: CFTypeRef?
     private var batterySensor: CFTypeRef?
     private var boardSensors: [CFTypeRef] = []
@@ -86,14 +84,7 @@ final class ThermalSampler {
                 }
                 if name.hasPrefix("PMU tdie"), seenDieNames.insert(name).inserted {
                     let digits = Int(name.dropFirst("PMU tdie".count)) ?? 99
-                    dieSensors.append(
-                        NamedSensor(
-                            name: name,
-                            label: "核心 #\(digits)",
-                            order: digits,
-                            service: serviceRef
-                        )
-                    )
+                    dieSensors.append(DieSensor(order: digits, service: serviceRef))
                 }
             } else if name.hasPrefix("NAND"), nandSensor == nil, readCelsius(from: serviceRef) != nil {
                 nandSensor = serviceRef
@@ -107,6 +98,12 @@ final class ThermalSampler {
         if let firstDie = dieSensors.first?.service {
             primarySensor = firstDie
         }
+    }
+
+    func reset() {
+        cachedTemperature = nil
+        cachedDetails = ThermalDetails()
+        tickCount = 0
     }
 
     func sample(includeDetails: Bool = false, advanceTick: Bool = true) -> (celsius: Double?, details: ThermalDetails) {

@@ -1,1 +1,3 @@
 "NSAppleEventsUsageDescription" = "SoftLive reads the current track and playback position from Apple Music to synchronize lyrics.";
+"NSDocumentsFolderUsageDescription" = "SoftLive reads ~/Documents/GitHub to find stale project build caches that can be safely moved to the Trash.";
+"NSDownloadsFolderUsageDescription" = "SoftLive reads ~/Downloads to find old disk images and installer archives that can be safely moved to the Trash.";

@@ -24,6 +24,7 @@ final class SystemMonitor {
     private var isEnabled = false
     private var observeTask: Task<Void, Never>?
     private var openRefreshTask: Task<Void, Never>?
+    private var killTasks: [pid_t: Task<Void, Never>] = [:]
     private(set) var isDetailActive = false
 
     init(preferences: Preferences) {
@@ -40,6 +41,15 @@ final class SystemMonitor {
                 self?.applyConfiguration(enabled: enabled, interval: interval, defaultTab: defaultTab)
             }
         }
+    }
+
+    isolated deinit {
+        observeTask?.cancel()
+        openRefreshTask?.cancel()
+        for task in killTasks.values {
+            task.cancel()
+        }
+        timer?.invalidate()
     }
 
     func setActiveTab(_ tab: MonitorTab) {
@@ -84,21 +94,25 @@ final class SystemMonitor {
     @discardableResult
     func terminateProcess(pid: pid_t, force: Bool = false) -> Bool {
         let ok = ProcessSampler.terminate(pid: pid, force: force)
+        guard ok else { return false }
         excludedPIDs.insert(pid)
         poll(recordHistory: false)
-        Task { [weak self] in
+        killTasks[pid]?.cancel()
+        killTasks[pid] = Task { [weak self] in
+            defer { self?.killTasks.removeValue(forKey: pid) }
             try? await Task.sleep(for: .milliseconds(350))
+            guard let self, !Task.isCancelled, self.isEnabled else { return }
             if !force, kill(pid, 0) == 0 {
                 _ = ProcessSampler.terminate(pid: pid, force: true)
             }
             try? await Task.sleep(for: .milliseconds(250))
-            guard let self else { return }
+            guard !Task.isCancelled else { return }
             self.excludedPIDs.remove(pid)
             if self.isDetailActive {
                 self.poll(recordHistory: false)
             }
         }
-        return ok
+        return true
     }
 
     private func applyConfiguration(enabled: Bool, interval: TimeInterval, defaultTab: MonitorTab) {
@@ -115,6 +129,15 @@ final class SystemMonitor {
         openRefreshTask?.cancel()
         openRefreshTask = nil
         guard enabled else {
+            isDetailActive = false
+            for task in killTasks.values {
+                task.cancel()
+            }
+            killTasks.removeAll()
+            cpuSampler.reset()
+            networkSampler.reset()
+            thermalSampler.reset()
+            processSampler.reset()
             cpuHistory.removeAll(keepingCapacity: true)
             memoryHistory.removeAll(keepingCapacity: true)
             thermalHistory.removeAll(keepingCapacity: true)

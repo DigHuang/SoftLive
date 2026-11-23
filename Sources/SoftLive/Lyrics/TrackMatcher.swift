@@ -15,7 +15,9 @@ enum TrackMatcher {
 
     /// Keyword for provider searches: the cleaned title plus the artist.
     static func searchKeyword(for track: Track) -> String {
-        "\(stripDecorations(track.title)) \(track.artist)".trimmingCharacters(in: .whitespaces)
+        let cleaned = stripDecorations(track.title)
+        let title = cleaned.isEmpty ? track.title.trimmingCharacters(in: .whitespaces) : cleaned
+        return "\(title) \(track.artist)".trimmingCharacters(in: .whitespaces)
     }
 
     static func best<C>(_ candidates: [C], for track: Track, song: (C) -> SongCandidate) -> C? {
@@ -35,17 +37,20 @@ enum TrackMatcher {
         }
 
         let title = normalize(track.title), candidateTitle = normalize(song.title)
+        guard !title.isEmpty, !candidateTitle.isEmpty else { return nil }
         let titleScore: Double
         if title == candidateTitle {
             titleScore = 2
-        } else if !title.isEmpty, !candidateTitle.isEmpty, title.contains(candidateTitle) || candidateTitle.contains(title) {
+        } else if title.contains(candidateTitle) || candidateTitle.contains(title) {
             titleScore = 1
         } else {
             return nil
         }
 
         let artist = normalize(track.artist)
-        let artistMatches = song.artists.map(normalize).contains { !$0.isEmpty && (artist.contains($0) || $0.contains(artist)) }
+        let artistMatches = !artist.isEmpty && song.artists.map(normalize).contains {
+            !$0.isEmpty && (artist.contains($0) || $0.contains(artist))
+        }
         return titleScore + (artistMatches ? 1 : 0) + durationScore
     }
 

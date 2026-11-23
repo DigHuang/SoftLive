@@ -51,6 +51,12 @@ struct LRCParserTests {
         #expect(parseLRC("[00:01.00]") == nil)
     }
 
+    @Test func parsesLinesWithLeadingWhitespaceAndBOM() throws {
+        let lyrics = try #require(parseLRC("\u{FEFF}  [00:01.00]first\n\t[00:02.00]second"))
+        #expect(lyrics.lines.map(\.time) == [1, 2])
+        #expect(lyrics.lines.map(\.text) == ["first", "second"])
+    }
+
     @Test func findsLineIndex() throws {
         let lyrics = try #require(parseLRC("[00:01.00]a\n[00:02.00]b\n[00:03.00]c"))
         #expect(lyrics.lineIndex(at: 0.5) == nil)
@@ -168,5 +174,65 @@ struct YRCParserTests {
             translation: "[00:00.80]你好世界\n[00:02.50]too far from any line"
         ))
         #expect(lyrics.lines.map(\.translation) == ["你好世界", nil])
+    }
+}
+
+struct LyricsServiceTests {
+    private let appleTrack = Track(
+        id: "am-1", title: "Hello", artist: "Adele", album: "", duration: 295, source: .appleMusic
+    )
+
+    @Test func fallsBackToLRCLibWhenNetEaseSearchErrors() async throws {
+        let expected = try #require(Lyrics(lines: [LyricLine(time: 1, text: "Hello")]))
+        let service = LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { _ in nil },
+                netEaseMatch: { _ in throw URLError(.timedOut) },
+                lrcLibMatch: { _ in expected }
+            )
+        )
+
+        let result = await service.lyrics(for: appleTrack)
+        #expect(result == expected)
+    }
+
+    @Test func doesNotNegativeCacheWhenNetEaseErrorsAndLRCLibHasNoMatch() async throws {
+        let expected = try #require(Lyrics(lines: [LyricLine(time: 2, text: "Recovered")]))
+        var attempt = 0
+        let service = LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { _ in nil },
+                netEaseMatch: { _ in
+                    attempt += 1
+                    if attempt == 1 { throw URLError(.cannotConnectToHost) }
+                    return expected
+                },
+                lrcLibMatch: { _ in nil }
+            )
+        )
+
+        #expect(await service.lyrics(for: appleTrack) == nil)
+        #expect(await service.lyrics(for: appleTrack) == expected)
+        #expect(attempt == 2)
+    }
+
+    @Test func cancellationSkipsLRCLibFallback() async {
+        var lrcLibCalled = false
+        let service = LyricsService(
+            cacheDirectory: nil,
+            provider: .init(
+                netEaseByID: { _ in nil },
+                netEaseMatch: { _ in throw CancellationError() },
+                lrcLibMatch: { _ in
+                    lrcLibCalled = true
+                    return nil
+                }
+            )
+        )
+
+        #expect(await service.lyrics(for: appleTrack) == nil)
+        #expect(!lrcLibCalled)
     }
 }

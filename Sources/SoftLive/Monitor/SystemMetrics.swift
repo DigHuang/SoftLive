@@ -82,18 +82,21 @@ struct SystemMetrics: Equatable, Sendable {
             return "0 B"
         }
         let kb = Double(bytesPerSec) / 1024
-        if kb < 1000 {
+        if kb.rounded() < 1000 {
             return "\(Int(kb.rounded())) KB"
         }
         let mb = kb / 1024
-        if mb < 10 {
+        if (mb * 10).rounded() < 100 {
             return String(format: "%.1f MB", mb)
         }
-        if mb < 1000 {
+        if mb.rounded() < 1000 {
             return "\(Int(mb.rounded())) MB"
         }
         let gb = mb / 1024
-        return String(format: "%.1f GB", gb)
+        if (gb * 10).rounded() < 100 {
+            return String(format: "%.1f GB", gb)
+        }
+        return "\(Int(gb.rounded())) GB"
     }
 }
 
@@ -103,6 +106,7 @@ struct ProcessMetric: Equatable, Sendable, Identifiable {
     let bundlePath: String?
     let valueText: String
     let fraction: Double
+    var isTerminable: Bool = true
 
     var id: Int32 { pid }
 }

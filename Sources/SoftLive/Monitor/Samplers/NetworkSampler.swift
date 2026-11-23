@@ -10,16 +10,18 @@ struct NetworkCounters: Equatable, Sendable {
         to current: NetworkCounters,
         elapsedSeconds: Double
     ) -> (uploadBytesPerSec: UInt64, downloadBytesPerSec: UInt64) {
-        guard elapsedSeconds > 0,
-              current.receivedBytes >= previous.receivedBytes,
-              current.sentBytes >= previous.sentBytes
-        else { return (0, 0) }
-        let downDelta = current.receivedBytes - previous.receivedBytes
-        let upDelta = current.sentBytes - previous.sentBytes
-        return (
-            uploadBytesPerSec: UInt64((Double(upDelta) / elapsedSeconds).rounded()),
-            downloadBytesPerSec: UInt64((Double(downDelta) / elapsedSeconds).rounded())
-        )
+        guard elapsedSeconds > 0 else { return (0, 0) }
+        let uploadRate: UInt64 = if current.sentBytes >= previous.sentBytes {
+            UInt64((Double(current.sentBytes - previous.sentBytes) / elapsedSeconds).rounded())
+        } else {
+            0
+        }
+        let downloadRate: UInt64 = if current.receivedBytes >= previous.receivedBytes {
+            UInt64((Double(current.receivedBytes - previous.receivedBytes) / elapsedSeconds).rounded())
+        } else {
+            0
+        }
+        return (uploadBytesPerSec: uploadRate, downloadBytesPerSec: downloadRate)
     }
 }
 
@@ -27,6 +29,12 @@ final class NetworkSampler {
     private var previousCounters: NetworkCounters?
     private var previousInstant: ContinuousClock.Instant?
     private var cachedRates: (uploadBytesPerSec: UInt64, downloadBytesPerSec: UInt64) = (0, 0)
+
+    func reset() {
+        previousCounters = nil
+        previousInstant = nil
+        cachedRates = (0, 0)
+    }
 
     func sample(now: ContinuousClock.Instant = .now) -> (uploadBytesPerSec: UInt64, downloadBytesPerSec: UInt64) {
         let current = Self.readCounters()

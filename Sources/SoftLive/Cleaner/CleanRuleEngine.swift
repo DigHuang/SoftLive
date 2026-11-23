@@ -1,6 +1,50 @@
 import AppKit
 import Darwin
 import Foundation
+import Synchronization
+
+/// Thread-safe lock-free cancellation token shared with GCD worker closures during directory scans.
+nonisolated final class CleanCancellationToken: Sendable {
+    private let cancelled = Atomic<Bool>(false)
+
+    init() {}
+
+    var isCancelled: Bool {
+        cancelled.load(ordering: .relaxed)
+    }
+
+    func cancel() {
+        cancelled.store(true, ordering: .relaxed)
+    }
+}
+
+/// Snapshot of running process bundle identifiers and names captured on `MainActor` before background scanning.
+struct RunningAppsSnapshot: Sendable {
+    let bundleIDs: Set<String>
+    let processNames: Set<String>
+
+    static func current() -> RunningAppsSnapshot {
+        var ids = Set(
+            NSWorkspace.shared.runningApplications
+                .compactMap { $0.bundleIdentifier?.lowercased() }
+        )
+        ids.insert("dev.softlive.softlive")
+        if let mainID = Bundle.main.bundleIdentifier?.lowercased() {
+            ids.insert(mainID)
+        }
+        var names = Set<String>()
+        for app in NSWorkspace.shared.runningApplications {
+            if let loc = app.localizedName?.lowercased(), !loc.isEmpty {
+                names.insert(loc)
+            }
+            if let bundleName = app.bundleURL?.deletingPathExtension().lastPathComponent.lowercased(),
+               !bundleName.isEmpty {
+                names.insert(bundleName)
+            }
+        }
+        return RunningAppsSnapshot(bundleIDs: ids, processNames: names)
+    }
+}
 
 /// Immutable snapshot of the local environment used by `CleanRuleEngine` during a scan or pre-trash check.
 struct CleanEnvironment: Sendable {
@@ -16,7 +60,7 @@ struct CleanEnvironment: Sendable {
     let minimumInstallerBytes: UInt64
     let now: Date
 
-    private static let genericBundleSegments: Set<String> = [
+    nonisolated private static let genericBundleSegments: Set<String> = [
         "com", "org", "net", "io", "dev", "me", "co", "app", "apps",
         "mac", "macos", "osx", "darwin", "desktop", "client", "helper",
         "agent", "service", "daemon", "renderer", "notifier", "xpc",
@@ -24,7 +68,7 @@ struct CleanEnvironment: Sendable {
         "tencent", "netease", "anthropic", "jetbrains", "adobe"
     ]
 
-    init(
+    nonisolated init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         runningBundleIDs: Set<String>? = nil,
         runningProcessNames: Set<String>? = nil,
@@ -33,18 +77,17 @@ struct CleanEnvironment: Sendable {
         staleDays: Int = CleanStaleThreshold.sevenDays.rawValue,
         minimumCacheEntryBytes: UInt64 = 64 * 1024,
         minimumInstallerBytes: UInt64 = 20 * 1_048_576,
-        now: Date = .now
+        now: Date = .now,
+        runningSnapshot: RunningAppsSnapshot? = nil
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
         let resolvedBundleIDs: Set<String>
         if let runningBundleIDs {
             resolvedBundleIDs = Set(runningBundleIDs.map { $0.lowercased() })
+        } else if let runningSnapshot {
+            resolvedBundleIDs = runningSnapshot.bundleIDs
         } else {
-            var ids = Set(
-                NSWorkspace.shared.runningApplications
-                    .compactMap { $0.bundleIdentifier?.lowercased() }
-            )
-            ids.insert("dev.softlive.softlive")
+            var ids = Set<String>(["dev.softlive.softlive"])
             if let mainID = Bundle.main.bundleIdentifier?.lowercased() {
                 ids.insert(mainID)
             }
@@ -55,18 +98,10 @@ struct CleanEnvironment: Sendable {
         let resolvedProcessNames: Set<String>
         if let runningProcessNames {
             resolvedProcessNames = Set(runningProcessNames.map { $0.lowercased() })
+        } else if let runningSnapshot {
+            resolvedProcessNames = runningSnapshot.processNames
         } else {
-            var names = Set<String>()
-            for app in NSWorkspace.shared.runningApplications {
-                if let loc = app.localizedName?.lowercased(), !loc.isEmpty {
-                    names.insert(loc)
-                }
-                if let bundleName = app.bundleURL?.deletingPathExtension().lastPathComponent.lowercased(),
-                   !bundleName.isEmpty {
-                    names.insert(bundleName)
-                }
-            }
-            resolvedProcessNames = names
+            resolvedProcessNames = []
         }
         self.runningProcessNames = resolvedProcessNames
         self.runningProductTokens = Self.extractProductTokens(
@@ -103,7 +138,7 @@ struct CleanEnvironment: Sendable {
         self.now = now
     }
 
-    private static func extractProductTokens(bundleIDs: Set<String>, names: Set<String>) -> Set<String> {
+    nonisolated private static func extractProductTokens(bundleIDs: Set<String>, names: Set<String>) -> Set<String> {
         var tokens = Set<String>()
         for bid in bundleIDs where !bid.hasPrefix("com.apple.") {
             for part in bid.split(separator: ".").map(String.init) {
@@ -129,7 +164,7 @@ struct CleanEnvironment: Sendable {
         return tokens
     }
 
-    private static func discoverInstalledApps(homeDirectory: URL) -> (bundleIDs: Set<String>, appNames: Set<String>) {
+    nonisolated private static func discoverInstalledApps(homeDirectory: URL) -> (bundleIDs: Set<String>, appNames: Set<String>) {
         var bundleIDs = Set<String>()
         var appNames = Set<String>()
         let appDirs: [URL] = [
@@ -141,21 +176,22 @@ struct CleanEnvironment: Sendable {
 
         let fm = FileManager.default
         for root in appDirs {
-            guard let items = try? fm.contentsOfDirectory(
+            guard !CleanRuleEngine.isSymbolicLink(root),
+                  let items = try? fm.contentsOfDirectory(
                 at: root,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }
 
-            for item in items {
+            for item in items where !CleanRuleEngine.isSymbolicLink(item) {
                 if item.pathExtension.lowercased() == "app" {
                     recordAppBundle(at: item, bundleIDs: &bundleIDs, appNames: &appNames)
                 } else if let subItems = try? fm.contentsOfDirectory(
                     at: item,
-                    includingPropertiesForKeys: nil,
+                    includingPropertiesForKeys: [.isSymbolicLinkKey],
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 ) {
-                    for sub in subItems where sub.pathExtension.lowercased() == "app" {
+                    for sub in subItems where sub.pathExtension.lowercased() == "app" && !CleanRuleEngine.isSymbolicLink(sub) {
                         recordAppBundle(at: sub, bundleIDs: &bundleIDs, appNames: &appNames)
                     }
                 }
@@ -164,7 +200,7 @@ struct CleanEnvironment: Sendable {
         return (bundleIDs, appNames)
     }
 
-    private static func recordAppBundle(at appURL: URL, bundleIDs: inout Set<String>, appNames: inout Set<String>) {
+    nonisolated private static func recordAppBundle(at appURL: URL, bundleIDs: inout Set<String>, appNames: inout Set<String>) {
         let name = appURL.deletingPathExtension().lastPathComponent.lowercased()
         if !name.isEmpty {
             appNames.insert(name)
@@ -188,7 +224,7 @@ struct CleanEnvironment: Sendable {
     }
 }
 
-nonisolated private final class LockedCollector<Element: Sendable>: @unchecked Sendable {
+nonisolated final class LockedCollector<Element: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [Element] = []
 
@@ -279,26 +315,128 @@ nonisolated enum CleanRuleEngine {
         return raw
     }
 
+    nonisolated static func canonicalResolvedPath(_ url: URL) -> String {
+        canonicalPath(url.resolvingSymlinksInPath())
+    }
+
+    /// Returns `true` only when `url` is not a symlink and both its lexical and symlink-resolved paths sit strictly inside one of `roots`.
+    nonisolated static func isStrictDescendant(_ url: URL, ofAnyRoot roots: [URL]) -> Bool {
+        guard !isSymbolicLink(url) else { return false }
+        let lexicalTarget = canonicalPath(url)
+        let resolvedTarget = canonicalResolvedPath(url)
+        return roots.contains { root in
+            let lexicalRoot = canonicalPath(root)
+            let resolvedRoot = canonicalResolvedPath(root)
+            return lexicalTarget != lexicalRoot
+                && lexicalTarget.hasPrefix(lexicalRoot + "/")
+                && resolvedTarget != resolvedRoot
+                && resolvedTarget.hasPrefix(resolvedRoot + "/")
+        }
+    }
+
+    private static let nonProtectedWorkspaceRelPaths = [
+        "Developer",
+        "Projects",
+        "Code",
+        "Work"
+    ]
+
+    private static let allWorkspaceRelPaths = ["Documents/GitHub"] + nonProtectedWorkspaceRelPaths
+
     /// Performs a full allowlist scan across all 4 categories in parallel across CPU cores.
-    nonisolated static func scan(environment: CleanEnvironment) -> [CleanCandidate] {
+    nonisolated static func scan(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
         let collector = LockedCollector<CleanCandidate>()
 
         DispatchQueue.concurrentPerform(iterations: 4) { index in
+            guard cancelToken?.isCancelled != true else { return }
             let partial: [CleanCandidate]
             switch index {
             case 0:
-                partial = scanAppCachesAndLogs(environment: environment)
+                partial = scanAppCachesAndLogs(environment: environment, cancelToken: cancelToken)
             case 1:
-                partial = scanDevAndPackageCaches(environment: environment)
+                partial = scanDevAndPackageCaches(environment: environment, cancelToken: cancelToken)
             case 2:
-                partial = scanStaleProjectArtifacts(environment: environment)
+                partial = scanStaleProjectArtifacts(
+                    workspaceRelPaths: allWorkspaceRelPaths,
+                    environment: environment,
+                    cancelToken: cancelToken
+                )
             default:
-                partial = scanLeftoversAndInstallers(environment: environment)
+                partial = scanLibraryLeftovers(environment: environment, cancelToken: cancelToken)
+                    + scanDownloadsInstallersRaw(environment: environment, cancelToken: cancelToken)
             }
+            guard cancelToken?.isCancelled != true else { return }
             collector.append(contentsOf: partial)
         }
 
-        return collector.elements.sorted { lhs, rhs in
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(collector.elements)
+    }
+
+    /// Scans all zero-TCC allowlist locations (`~/Library/*`, Dev caches, and non-TCC project roots)
+    /// without touching TCC-gated `~/Documents` or `~/Downloads`.
+    nonisolated static func scanNonProtected(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        let collector = LockedCollector<CleanCandidate>()
+
+        DispatchQueue.concurrentPerform(iterations: 4) { index in
+            guard cancelToken?.isCancelled != true else { return }
+            let partial: [CleanCandidate]
+            switch index {
+            case 0:
+                partial = scanAppCachesAndLogs(environment: environment, cancelToken: cancelToken)
+            case 1:
+                partial = scanDevAndPackageCaches(environment: environment, cancelToken: cancelToken)
+            case 2:
+                partial = scanStaleProjectArtifacts(
+                    workspaceRelPaths: nonProtectedWorkspaceRelPaths,
+                    environment: environment,
+                    cancelToken: cancelToken
+                )
+            default:
+                partial = scanLibraryLeftovers(environment: environment, cancelToken: cancelToken)
+            }
+            guard cancelToken?.isCancelled != true else { return }
+            collector.append(contentsOf: partial)
+        }
+
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(collector.elements)
+    }
+
+    /// Scans TCC-gated `~/Documents/GitHub` independently so a pending folder prompt never stalls Stage 1.
+    nonisolated static func scanDocumentsGitHub(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        guard cancelToken?.isCancelled != true else { return [] }
+        let items = scanStaleProjectArtifacts(
+            workspaceRelPaths: ["Documents/GitHub"],
+            environment: environment,
+            cancelToken: cancelToken
+        )
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(items)
+    }
+
+    /// Scans TCC-gated `~/Downloads` installers independently so a pending folder prompt never stalls Stage 1.
+    nonisolated static func scanDownloadsInstallers(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        guard cancelToken?.isCancelled != true else { return [] }
+        let items = scanDownloadsInstallersRaw(environment: environment, cancelToken: cancelToken)
+        guard cancelToken?.isCancelled != true else { return [] }
+        return sortCandidates(items)
+    }
+
+    nonisolated static func sortCandidates(_ candidates: [CleanCandidate]) -> [CleanCandidate] {
+        candidates.sorted { lhs, rhs in
             if lhs.sizeBytes != rhs.sizeBytes {
                 return lhs.sizeBytes > rhs.sizeBytes
             }
@@ -306,26 +444,27 @@ nonisolated enum CleanRuleEngine {
         }
     }
 
-    /// Re-verifies right before trashing that the candidate still exists, is not a symlink escaping allowlisted roots,
-    /// is not inside an excluded path, and does not belong to an application that launched since the scan.
+    /// Re-verifies right before trashing that the candidate still exists, is not a symlink or inside a symlinked ancestor
+    /// escaping allowlisted roots, is not inside an excluded path, and does not belong to a running application.
     nonisolated static func canSafelyTrash(_ candidate: CleanCandidate, environment: CleanEnvironment) -> Bool {
         let fm = FileManager.default
         let targetURL = candidate.url.standardizedFileURL
         let targetPath = canonicalPath(targetURL)
+        let resolvedTargetPath = canonicalResolvedPath(targetURL)
 
         guard fm.fileExists(atPath: targetPath) else { return false }
         guard !isSymbolicLink(targetURL) else { return false }
 
         for excluded in environment.excludedPaths {
-            if targetPath == excluded || targetPath.hasPrefix(excluded + "/") {
+            let resolvedExcluded = canonicalResolvedPath(URL(fileURLWithPath: excluded))
+            if targetPath == excluded || targetPath.hasPrefix(excluded + "/")
+                || resolvedTargetPath == resolvedExcluded || resolvedTargetPath.hasPrefix(resolvedExcluded + "/") {
                 return false
             }
         }
 
-        let allowedRoots = allowlistedRootPaths(for: candidate.category, home: environment.homeDirectory)
-        guard allowedRoots.contains(where: { root in
-            targetPath.hasPrefix(root + "/") && targetPath != root
-        }) else {
+        let allowedRoots = allowlistedRootURLs(for: candidate.category, home: environment.homeDirectory)
+        guard isStrictDescendant(targetURL, ofAnyRoot: allowedRoots) else {
             return false
         }
 
@@ -336,6 +475,15 @@ nonisolated enum CleanRuleEngine {
                 return false
             }
         case .devCaches:
+            let resolvedCaches = canonicalResolvedPath(
+                environment.homeDirectory.appending(path: "Library/Caches", directoryHint: .isDirectory)
+            )
+            if resolvedTargetPath.hasPrefix(resolvedCaches + "/") {
+                guard devCacheNamesInLibraryCaches.contains(entryName),
+                      !isProtectedOrRunningAppEntry(entryName, environment: environment) else {
+                    return false
+                }
+            }
             if targetPath.contains("/DerivedData/") && environment.isXcodeRunning {
                 return false
             }
@@ -345,11 +493,16 @@ nonisolated enum CleanRuleEngine {
         case .staleArtifacts:
             break
         case .leftoversAndInstallers:
-            let baseName = entryName.hasSuffix(".savedstate")
-                ? String(entryName.dropLast(".savedstate".count))
-                : entryName
-            if isProtectedOrRunningAppEntry(baseName, environment: environment) {
-                return false
+            let resolvedDownloads = canonicalResolvedPath(
+                environment.homeDirectory.appending(path: "Downloads", directoryHint: .isDirectory)
+            )
+            if !resolvedTargetPath.hasPrefix(resolvedDownloads + "/") {
+                let baseName = entryName.hasSuffix(".savedstate")
+                    ? String(entryName.dropLast(".savedstate".count))
+                    : entryName
+                if isProtectedOrRunningAppEntry(baseName, environment: environment) {
+                    return false
+                }
             }
         }
 
@@ -358,7 +511,10 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Category 1: App Caches & Logs
 
-    nonisolated private static func scanAppCachesAndLogs(environment: CleanEnvironment) -> [CleanCandidate] {
+    nonisolated private static func scanAppCachesAndLogs(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
         let home = environment.homeDirectory
         let scanRoots: [(url: URL, labelPrefix: String)] = [
             (home.appending(path: "Library/Caches", directoryHint: .isDirectory), "~/Library/Caches"),
@@ -369,6 +525,8 @@ nonisolated enum CleanRuleEngine {
 
         var workItems: [(child: URL, rawName: String, labelPrefix: String)] = []
         for root in scanRoots {
+            guard cancelToken?.isCancelled != true else { return [] }
+            guard isDirectory(root.url) else { continue }
             for child in immediateChildren(of: root.url) {
                 guard !isSymbolicLink(child) else { continue }
                 let rawName = child.lastPathComponent
@@ -389,8 +547,10 @@ nonisolated enum CleanRuleEngine {
         let items = workItems
         let collector = LockedCollector<CleanCandidate>()
         DispatchQueue.concurrentPerform(iterations: items.count) { idx in
+            guard cancelToken?.isCancelled != true else { return }
             let item = items[idx]
-            let metrics = directoryMetrics(at: item.child)
+            let metrics = directoryMetrics(at: item.child, cancelToken: cancelToken)
+            guard cancelToken?.isCancelled != true else { return }
             guard metrics.bytes >= environment.minimumCacheEntryBytes else { return }
             let displayName = readableEntryTitle(from: item.rawName, stripSuffix: nil)
             let candidate = CleanCandidate(
@@ -410,70 +570,93 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Category 2: Dev Tools, Xcode & Package Caches
 
-    nonisolated private static func scanDevAndPackageCaches(environment: CleanEnvironment) -> [CleanCandidate] {
+    nonisolated private static func scanDevAndPackageCaches(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
         var candidates: [CleanCandidate] = []
         let home = environment.homeDirectory
 
         // 2A. Xcode & Simulator
         if !environment.isXcodeRunning {
             let derivedData = home.appending(path: "Library/Developer/Xcode/DerivedData", directoryHint: .isDirectory)
-            for child in immediateChildren(of: derivedData) where !isSymbolicLink(child) {
-                let metrics = directoryMetrics(at: child)
-                guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
-                let name = child.lastPathComponent
-                let projectTitle = name.split(separator: "-", maxSplits: 1).first.map(String.init) ?? name
-                candidates.append(
-                    CleanCandidate(
-                        url: child,
-                        category: .devCaches,
-                        title: "DerivedData · \(projectTitle)",
-                        subtitle: "~/Library/Developer/Xcode/DerivedData/\(name)",
-                        sizeBytes: metrics.bytes,
-                        safetyTier: .safe,
-                        lastModified: metrics.lastModified
+            if isDirectory(derivedData) {
+                for child in immediateChildren(of: derivedData) where !isSymbolicLink(child) {
+                    guard cancelToken?.isCancelled != true else { return [] }
+                    let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                    guard cancelToken?.isCancelled != true else { return [] }
+                    guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
+                    let name = child.lastPathComponent
+                    let projectTitle = name.split(separator: "-", maxSplits: 1).first.map(String.init) ?? name
+                    candidates.append(
+                        CleanCandidate(
+                            url: child,
+                            category: .devCaches,
+                            title: "DerivedData · \(projectTitle)",
+                            subtitle: "~/Library/Developer/Xcode/DerivedData/\(name)",
+                            sizeBytes: metrics.bytes,
+                            safetyTier: .safe,
+                            lastModified: metrics.lastModified
+                        )
                     )
-                )
+                }
             }
         }
 
         if !environment.isXcodeRunning && !environment.isSimulatorRunning {
             let simCaches = home.appending(path: "Library/Developer/CoreSimulator/Caches", directoryHint: .isDirectory)
-            for child in immediateChildren(of: simCaches) where !isSymbolicLink(child) {
-                let metrics = directoryMetrics(at: child)
-                guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
-                let name = child.lastPathComponent
-                candidates.append(
-                    CleanCandidate(
-                        url: child,
-                        category: .devCaches,
-                        title: "Simulator Cache · \(name)",
-                        subtitle: "~/Library/Developer/CoreSimulator/Caches/\(name)",
-                        sizeBytes: metrics.bytes,
-                        safetyTier: .safe,
-                        lastModified: metrics.lastModified
+            if isDirectory(simCaches) {
+                for child in immediateChildren(of: simCaches) where !isSymbolicLink(child) {
+                    guard cancelToken?.isCancelled != true else { return [] }
+                    let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                    guard cancelToken?.isCancelled != true else { return [] }
+                    guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
+                    let name = child.lastPathComponent
+                    candidates.append(
+                        CleanCandidate(
+                            url: child,
+                            category: .devCaches,
+                            title: "Simulator Cache · \(name)",
+                            localizedTitle: BilingualTitle(
+                                zh: "模拟器缓存 · \(name)",
+                                en: "Simulator Cache · \(name)"
+                            ),
+                            subtitle: "~/Library/Developer/CoreSimulator/Caches/\(name)",
+                            sizeBytes: metrics.bytes,
+                            safetyTier: .safe,
+                            lastModified: metrics.lastModified
+                        )
                     )
-                )
+                }
             }
         }
 
-        let xcodeCheckFirstRoots: [(relPath: String, label: String)] = [
-            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport"),
-            ("Library/Developer/Xcode/watchOS DeviceSupport", "watchOS DeviceSupport"),
-            ("Library/Developer/Xcode/tvOS DeviceSupport", "tvOS DeviceSupport"),
-            ("Library/Developer/Xcode/Archives", "Xcode Archive")
+        let xcodeCheckFirstRoots: [(relPath: String, zhLabel: String, enLabel: String)] = [
+            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS 设备支持", "iOS DeviceSupport"),
+            ("Library/Developer/Xcode/watchOS DeviceSupport", "watchOS 设备支持", "watchOS DeviceSupport"),
+            ("Library/Developer/Xcode/tvOS DeviceSupport", "tvOS 设备支持", "tvOS DeviceSupport"),
+            ("Library/Developer/Xcode/Archives", "Xcode 归档", "Xcode Archive")
         ]
 
         for spec in xcodeCheckFirstRoots {
+            guard cancelToken?.isCancelled != true else { return [] }
             let rootURL = home.appending(path: spec.relPath, directoryHint: .isDirectory)
+            guard isDirectory(rootURL) else { continue }
             for child in immediateChildren(of: rootURL) where !isSymbolicLink(child) {
-                let metrics = directoryMetrics(at: child)
+                guard cancelToken?.isCancelled != true else { return [] }
+                let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                guard cancelToken?.isCancelled != true else { return [] }
                 guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
                 let name = child.lastPathComponent
                 candidates.append(
                     CleanCandidate(
                         url: child,
                         category: .devCaches,
-                        title: "\(spec.label) · \(name)",
+                        title: "\(spec.enLabel) · \(name)",
+                        localizedTitle: BilingualTitle(
+                            zh: "\(spec.zhLabel) · \(name)",
+                            en: "\(spec.enLabel) · \(name)"
+                        ),
                         subtitle: "~/\(spec.relPath)/\(name)",
                         sizeBytes: metrics.bytes,
                         safetyTier: .checkFirst,
@@ -484,44 +667,49 @@ nonisolated enum CleanRuleEngine {
         }
 
         // 2B. Package Managers, Build Toolchains & Local AI Caches
-        let pkgSpecs: [(relPath: String, title: String, tier: CleanSafetyTier)] = [
-            ("Library/Caches/Homebrew", "Homebrew Cache", .safe),
-            (".npm/_cacache", "npm (_cacache)", .safe),
-            ("Library/Caches/pnpm", "pnpm Cache", .safe),
-            (".local/share/pnpm/store", "pnpm Store", .safe),
-            ("Library/Caches/Yarn", "Yarn Cache", .safe),
-            ("Library/Caches/bun", "Bun Cache", .safe),
-            (".bun/install/cache", "Bun Install Cache", .safe),
-            ("Library/Caches/mise", "mise Toolchain Cache", .safe),
-            ("Library/Caches/org.swift.swiftpm", "SwiftPM Package Cache", .safe),
-            (".cargo/registry/cache", "Cargo Registry Cache", .safe),
-            (".cargo/git/db", "Cargo Git Cache", .safe),
-            ("Library/Caches/pip", "pip Cache", .safe),
-            ("Library/Caches/uv", "uv Cache", .safe),
-            ("Library/Caches/pypoetry", "Poetry Cache", .safe),
-            ("Library/Caches/CocoaPods", "CocoaPods Cache", .safe),
-            ("Library/Caches/go-build", "Go Build Cache", .safe),
-            ("Library/Caches/typescript", "TypeScript Cache", .safe),
-            ("Library/Caches/ms-playwright", "Playwright Browsers", .checkFirst),
-            ("Library/Caches/Cypress", "Cypress Cache", .checkFirst),
-            (".gradle/caches", "Gradle Build Cache", .safe),
-            (".m2/repository", "Maven Local Repo", .checkFirst),
-            (".cache/huggingface/hub", "Hugging Face Models", .checkFirst)
+        let pkgSpecs: [(relPath: String, zhTitle: String, enTitle: String, tier: CleanSafetyTier)] = [
+            ("Library/Caches/Homebrew", "Homebrew 缓存", "Homebrew Cache", .safe),
+            (".npm/_cacache", "npm 缓存 (_cacache)", "npm (_cacache)", .safe),
+            ("Library/Caches/pnpm", "pnpm 缓存", "pnpm Cache", .safe),
+            (".local/share/pnpm/store", "pnpm 存储", "pnpm Store", .safe),
+            ("Library/Caches/Yarn", "Yarn 缓存", "Yarn Cache", .safe),
+            ("Library/Caches/bun", "Bun 缓存", "Bun Cache", .safe),
+            (".bun/install/cache", "Bun 安装缓存", "Bun Install Cache", .safe),
+            ("Library/Caches/mise", "mise 工具链缓存", "mise Toolchain Cache", .safe),
+            ("Library/Caches/org.swift.swiftpm", "SwiftPM 包缓存", "SwiftPM Package Cache", .safe),
+            (".cargo/registry/cache", "Cargo 注册表缓存", "Cargo Registry Cache", .safe),
+            (".cargo/git/db", "Cargo Git 缓存", "Cargo Git Cache", .safe),
+            ("Library/Caches/pip", "pip 缓存", "pip Cache", .safe),
+            ("Library/Caches/uv", "uv 缓存", "uv Cache", .safe),
+            ("Library/Caches/pypoetry", "Poetry 缓存", "Poetry Cache", .safe),
+            ("Library/Caches/CocoaPods", "CocoaPods 缓存", "CocoaPods Cache", .safe),
+            ("Library/Caches/go-build", "Go 构建缓存", "Go Build Cache", .safe),
+            ("Library/Caches/typescript", "TypeScript 缓存", "TypeScript Cache", .safe),
+            ("Library/Caches/ms-playwright", "Playwright 浏览器", "Playwright Browsers", .checkFirst),
+            ("Library/Caches/Cypress", "Cypress 缓存", "Cypress Cache", .checkFirst),
+            (".gradle/caches", "Gradle 构建缓存", "Gradle Build Cache", .safe),
+            (".m2/repository", "Maven 本地仓库", "Maven Local Repo", .checkFirst),
+            (".cache/huggingface/hub", "Hugging Face 模型", "Hugging Face Models", .checkFirst)
         ]
 
+        let resolvedHome = canonicalResolvedPath(home)
         for spec in pkgSpecs {
+            guard cancelToken?.isCancelled != true else { return [] }
             let targetURL = home.appending(path: spec.relPath, directoryHint: .isDirectory)
             guard FileManager.default.fileExists(atPath: targetURL.path(percentEncoded: false)),
-                  !isSymbolicLink(targetURL) else {
+                  !isSymbolicLink(targetURL),
+                  canonicalResolvedPath(targetURL).hasPrefix(resolvedHome + "/") else {
                 continue
             }
-            let metrics = directoryMetrics(at: targetURL)
+            let metrics = directoryMetrics(at: targetURL, cancelToken: cancelToken)
+            guard cancelToken?.isCancelled != true else { return [] }
             guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
             candidates.append(
                 CleanCandidate(
                     url: targetURL,
                     category: .devCaches,
-                    title: spec.title,
+                    title: spec.enTitle,
+                    localizedTitle: BilingualTitle(zh: spec.zhTitle, en: spec.enTitle),
                     subtitle: "~/\(spec.relPath)",
                     sizeBytes: metrics.bytes,
                     safetyTier: spec.tier,
@@ -535,23 +723,19 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Category 3: Stale Project Build Artifacts
 
-    nonisolated private static func scanStaleProjectArtifacts(environment: CleanEnvironment) -> [CleanCandidate] {
+    nonisolated private static func scanStaleProjectArtifacts(
+        workspaceRelPaths: [String],
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
         var candidates: [CleanCandidate] = []
         let home = environment.homeDirectory
         let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
 
-        let workspaceRelPaths = [
-            "Documents/GitHub",
-            "Developer",
-            "Projects",
-            "Code",
-            "Work"
-        ]
-
         for relPath in workspaceRelPaths {
+            guard cancelToken?.isCancelled != true else { return [] }
             let rootURL = home.appending(path: relPath, directoryHint: .isDirectory)
-            guard FileManager.default.fileExists(atPath: rootURL.path(percentEncoded: false)),
-                  !isSymbolicLink(rootURL) else {
+            guard isDirectory(rootURL) else {
                 continue
             }
             candidates.append(
@@ -559,7 +743,8 @@ nonisolated enum CleanRuleEngine {
                     at: rootURL,
                     displayPrefix: "~/\(relPath)",
                     staleCutoff: staleCutoff,
-                    environment: environment
+                    environment: environment,
+                    cancelToken: cancelToken
                 )
             )
         }
@@ -571,7 +756,8 @@ nonisolated enum CleanRuleEngine {
         at workspaceRoot: URL,
         displayPrefix: String,
         staleCutoff: Date,
-        environment: CleanEnvironment
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
     ) -> [CleanCandidate] {
         var found: [CleanCandidate] = []
 
@@ -581,10 +767,13 @@ nonisolated enum CleanRuleEngine {
             depth: Int,
             inheritedRepoDate: Date?
         ) {
-            guard depth <= 3 else { return }
+            guard depth <= 3, cancelToken?.isCancelled != true else { return }
             let stdPath = canonicalPath(dir)
+            let resolvedPath = canonicalResolvedPath(dir)
             for excluded in environment.excludedPaths {
-                if stdPath == excluded || stdPath.hasPrefix(excluded + "/") {
+                let resolvedExcluded = canonicalResolvedPath(URL(fileURLWithPath: excluded))
+                if stdPath == excluded || stdPath.hasPrefix(excluded + "/")
+                    || resolvedPath == resolvedExcluded || resolvedPath.hasPrefix(resolvedExcluded + "/") {
                     return
                 }
             }
@@ -605,6 +794,7 @@ nonisolated enum CleanRuleEngine {
             }
 
             for child in children where !isSymbolicLink(child) {
+                guard cancelToken?.isCancelled != true else { return }
                 let name = child.lastPathComponent
                 if name == ".git" || name == ".svn" || name == ".hg" || name == ".DS_Store" {
                     continue
@@ -615,11 +805,16 @@ nonisolated enum CleanRuleEngine {
                     if name == "target" && !isRustOrMavenProject(dir) {
                         continue
                     }
-                    let projectLastActive = effectiveRepoDate ?? latestProjectActivityDate(in: dir, artifactURL: child)
+                    let localActivity = latestProjectActivityDate(in: dir, artifactURL: child)
+                    let projectLastActive = latestDate(effectiveRepoDate, localActivity)
                     if let projectLastActive, projectLastActive > staleCutoff {
                         continue
                     }
-                    let metrics = directoryMetrics(at: child)
+                    let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                    guard cancelToken?.isCancelled != true else { return }
+                    if let artifactModified = metrics.lastModified, artifactModified > staleCutoff {
+                        continue
+                    }
                     guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
                     let fullRelPath = relativeComponents.isEmpty ? dir.lastPathComponent : relativeComponents.joined(separator: "/")
                     let compactLabel: String
@@ -638,7 +833,7 @@ nonisolated enum CleanRuleEngine {
                             subtitle: "\(displayPrefix)/\(fullRelPath)/\(name)",
                             sizeBytes: metrics.bytes,
                             safetyTier: .safe,
-                            lastModified: projectLastActive ?? metrics.lastModified
+                            lastModified: latestDate(projectLastActive, metrics.lastModified)
                         )
                     )
                 } else if depth < 3 && !name.hasPrefix(".") && isDirectory(child) {
@@ -658,60 +853,79 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Category 4: Orphaned App Leftovers & Leftover Installers
 
-    nonisolated private static func scanLeftoversAndInstallers(environment: CleanEnvironment) -> [CleanCandidate] {
+    nonisolated private static func scanLibraryLeftovers(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
         var candidates: [CleanCandidate] = []
         let home = environment.homeDirectory
-        let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
 
         // 4A. Saved Application State (*.savedState)
         let savedStateRoot = home.appending(path: "Library/Saved Application State", directoryHint: .isDirectory)
-        for child in immediateChildren(of: savedStateRoot) where !isSymbolicLink(child) {
-            let rawName = child.lastPathComponent
-            let lower = rawName.lowercased()
-            let baseID = lower.hasSuffix(".savedstate")
-                ? String(lower.dropLast(".savedstate".count))
-                : lower
-            guard !isProtectedOrRunningAppEntry(baseID, environment: environment) else { continue }
-            let metrics = directoryMetrics(at: child)
-            guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
-            let isOrphan = !isInstalledAppBundleID(baseID, environment: environment)
-            let label = readableEntryTitle(from: rawName, stripSuffix: ".savedState")
-            candidates.append(
-                CleanCandidate(
-                    url: child,
-                    category: .leftoversAndInstallers,
-                    title: isOrphan ? "残留状态 · \(label)" : "窗口状态 · \(label)",
-                    subtitle: "~/Library/Saved Application State/\(rawName)",
-                    sizeBytes: metrics.bytes,
-                    safetyTier: .safe,
-                    lastModified: metrics.lastModified
+        if isDirectory(savedStateRoot) {
+            for child in immediateChildren(of: savedStateRoot) where !isSymbolicLink(child) {
+                guard cancelToken?.isCancelled != true else { return [] }
+                let rawName = child.lastPathComponent
+                let lower = rawName.lowercased()
+                let baseID = lower.hasSuffix(".savedstate")
+                    ? String(lower.dropLast(".savedstate".count))
+                    : lower
+                guard !isProtectedOrRunningAppEntry(baseID, environment: environment) else { continue }
+                let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                guard cancelToken?.isCancelled != true else { return [] }
+                guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
+                let isOrphan = !isInstalledAppBundleID(baseID, environment: environment)
+                let label = readableEntryTitle(from: rawName, stripSuffix: ".savedState")
+                let title = isOrphan
+                    ? BilingualTitle(zh: "残留状态 · \(label)", en: "Orphaned State · \(label)")
+                    : BilingualTitle(zh: "窗口状态 · \(label)", en: "Saved State · \(label)")
+                candidates.append(
+                    CleanCandidate(
+                        url: child,
+                        category: .leftoversAndInstallers,
+                        title: title.en,
+                        localizedTitle: title,
+                        subtitle: "~/Library/Saved Application State/\(rawName)",
+                        sizeBytes: metrics.bytes,
+                        safetyTier: .safe,
+                        lastModified: metrics.lastModified
+                    )
                 )
-            )
+            }
         }
 
         // 4B. Orphaned reverse-DNS directories in Application Support & HTTPStorages
-        let orphanRoots: [(relPath: String, label: String, tier: CleanSafetyTier)] = [
-            ("Library/HTTPStorages", "HTTP 残留", .safe),
-            ("Library/Application Support", "卸载残留", .checkFirst)
+        let orphanRoots: [(relPath: String, zhLabel: String, enLabel: String, tier: CleanSafetyTier)] = [
+            ("Library/HTTPStorages", "HTTP 残留", "HTTP Leftover", .safe),
+            ("Library/Application Support", "卸载残留", "App Leftover", .checkFirst)
         ]
 
         for rootSpec in orphanRoots {
+            guard cancelToken?.isCancelled != true else { return [] }
             let rootURL = home.appending(path: rootSpec.relPath, directoryHint: .isDirectory)
+            guard isDirectory(rootURL) else { continue }
             for child in immediateChildren(of: rootURL) where !isSymbolicLink(child) {
+                guard cancelToken?.isCancelled != true else { return [] }
                 let rawName = child.lastPathComponent
                 let lower = rawName.lowercased()
                 guard looksLikeReverseDNSBundleID(lower) else { continue }
                 guard !isProtectedOrRunningAppEntry(lower, environment: environment) else { continue }
                 guard !isInstalledAppBundleID(lower, environment: environment) else { continue }
 
-                let metrics = directoryMetrics(at: child)
+                let metrics = directoryMetrics(at: child, cancelToken: cancelToken)
+                guard cancelToken?.isCancelled != true else { return [] }
                 guard metrics.bytes >= environment.minimumCacheEntryBytes else { continue }
                 let label = readableEntryTitle(from: rawName, stripSuffix: nil)
+                let title = BilingualTitle(
+                    zh: "\(rootSpec.zhLabel) · \(label)",
+                    en: "\(rootSpec.enLabel) · \(label)"
+                )
                 candidates.append(
                     CleanCandidate(
                         url: child,
                         category: .leftoversAndInstallers,
-                        title: "\(rootSpec.label) · \(label)",
+                        title: title.en,
+                        localizedTitle: title,
                         subtitle: "~/\(rootSpec.relPath)/\(rawName)",
                         sizeBytes: metrics.bytes,
                         safetyTier: rootSpec.tier,
@@ -721,30 +935,45 @@ nonisolated enum CleanRuleEngine {
             }
         }
 
+        return candidates
+    }
+
+    nonisolated private static func scanDownloadsInstallersRaw(
+        environment: CleanEnvironment,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> [CleanCandidate] {
+        var candidates: [CleanCandidate] = []
+        let home = environment.homeDirectory
+        let staleCutoff = environment.now.addingTimeInterval(-TimeInterval(environment.staleDays) * 86_400)
+
         // 4C. Leftover Installers & Large Archives in ~/Downloads
         let downloadsURL = home.appending(path: "Downloads", directoryHint: .isDirectory)
-        for item in immediateChildren(of: downloadsURL) where !isSymbolicLink(item) {
-            let fileName = item.lastPathComponent
-            let lowerName = fileName.lowercased()
-            let ext = item.pathExtension.lowercased()
-            let isTarGz = lowerName.hasSuffix(".tar.gz")
-            guard installerExtensions.contains(ext) || isTarGz else { continue }
-            let metrics = directoryMetrics(at: item)
-            guard metrics.bytes >= environment.minimumInstallerBytes else { continue }
-            if let modified = metrics.lastModified, modified > staleCutoff {
-                continue
-            }
-            candidates.append(
-                CleanCandidate(
-                    url: item,
-                    category: .leftoversAndInstallers,
-                    title: fileName,
-                    subtitle: "~/Downloads/\(fileName)",
-                    sizeBytes: metrics.bytes,
-                    safetyTier: .checkFirst,
-                    lastModified: metrics.lastModified
+        if isDirectory(downloadsURL) {
+            for item in immediateChildren(of: downloadsURL) where !isSymbolicLink(item) {
+                guard cancelToken?.isCancelled != true else { return [] }
+                let fileName = item.lastPathComponent
+                let lowerName = fileName.lowercased()
+                let ext = item.pathExtension.lowercased()
+                let isTarGz = lowerName.hasSuffix(".tar.gz")
+                guard installerExtensions.contains(ext) || isTarGz else { continue }
+                let metrics = directoryMetrics(at: item, cancelToken: cancelToken)
+                guard cancelToken?.isCancelled != true else { return [] }
+                guard metrics.bytes >= environment.minimumInstallerBytes else { continue }
+                if let modified = metrics.lastModified, modified > staleCutoff {
+                    continue
+                }
+                candidates.append(
+                    CleanCandidate(
+                        url: item,
+                        category: .leftoversAndInstallers,
+                        title: fileName,
+                        subtitle: "~/Downloads/\(fileName)",
+                        sizeBytes: metrics.bytes,
+                        safetyTier: .checkFirst,
+                        lastModified: metrics.lastModified
+                    )
                 )
-            )
+            }
         }
 
         return candidates
@@ -752,7 +981,7 @@ nonisolated enum CleanRuleEngine {
 
     // MARK: - Helpers
 
-    nonisolated private static func allowlistedRootPaths(for category: CleanCategory, home: URL) -> [String] {
+    nonisolated private static func allowlistedRootURLs(for category: CleanCategory, home: URL) -> [URL] {
         let rels: [String]
         switch category {
         case .appCaches:
@@ -797,14 +1026,14 @@ nonisolated enum CleanRuleEngine {
             ]
         }
         return rels.map {
-            canonicalPath(home.appending(path: $0, directoryHint: .isDirectory))
+            home.appending(path: $0, directoryHint: .isDirectory)
         }
     }
 
     nonisolated private static func looksLikeReverseDNSBundleID(_ lower: String) -> Bool {
         let parts = lower.split(separator: ".")
         guard parts.count >= 3, let first = parts.first else { return false }
-        let validTLDs: Set<Substring> = ["com", "org", "net", "io", "dev", "me", "app", "co", "ai", " cc"]
+        let validTLDs: Set<Substring> = ["com", "org", "net", "io", "dev", "me", "app", "co", "ai", "cc"]
         return validTLDs.contains(first) && !lower.hasPrefix("com.apple.")
     }
 
@@ -885,10 +1114,39 @@ nonisolated enum CleanRuleEngine {
         return fm.fileExists(atPath: cargo) || fm.fileExists(atPath: pom)
     }
 
+    nonisolated private static func latestDate(_ lhs: Date?, _ rhs: Date?) -> Date? {
+        switch (lhs, rhs) {
+        case let (a?, b?): max(a, b)
+        case let (a?, nil): a
+        case let (nil, b?): b
+        case (nil, nil): nil
+        }
+    }
+
+    nonisolated private static func resolvedGitDirectory(in repoRoot: URL) -> URL {
+        let dotGit = repoRoot.appending(path: ".git")
+        var st = stat()
+        if lstat(canonicalPath(dotGit), &st) == 0, (st.st_mode & S_IFMT) == S_IFREG,
+           let content = try? String(contentsOf: dotGit, encoding: .utf8) {
+            let line = content.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+            if line.lowercased().hasPrefix("gitdir:") {
+                let rawPath = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !rawPath.isEmpty {
+                    if rawPath.hasPrefix("/") {
+                        return URL(fileURLWithPath: rawPath, isDirectory: true)
+                    }
+                    return repoRoot.appending(path: rawPath, directoryHint: .isDirectory).standardizedFileURL
+                }
+            }
+        }
+        return dotGit
+    }
+
     nonisolated private static func latestRepositoryActivityDate(in repoRoot: URL, children: [URL]) -> Date? {
         var latest = modificationDate(of: repoRoot)
-        for gitProbe in [".git/index", ".git/HEAD", ".git/FETCH_HEAD", ".git/ORIG_HEAD"] {
-            let url = repoRoot.appending(path: gitProbe)
+        let gitDir = resolvedGitDirectory(in: repoRoot)
+        for gitProbe in ["index", "HEAD", "FETCH_HEAD", "ORIG_HEAD", "logs/HEAD", "COMMIT_EDITMSG"] {
+            let url = gitDir.appending(path: gitProbe)
             if let d = modificationDate(of: url), d > (latest ?? .distantPast) {
                 latest = d
             }
@@ -905,13 +1163,12 @@ nonisolated enum CleanRuleEngine {
 
     nonisolated private static func latestProjectActivityDate(in projectDir: URL, artifactURL: URL) -> Date? {
         var latest = modificationDate(of: projectDir)
-        let gitIndex = projectDir.appending(path: ".git/index")
-        if let gitDate = modificationDate(of: gitIndex), gitDate > (latest ?? .distantPast) {
-            latest = gitDate
-        }
-        let gitHead = projectDir.appending(path: ".git/HEAD")
-        if let headDate = modificationDate(of: gitHead), headDate > (latest ?? .distantPast) {
-            latest = headDate
+        let gitDir = resolvedGitDirectory(in: projectDir)
+        for gitProbe in ["index", "HEAD", "logs/HEAD"] {
+            let url = gitDir.appending(path: gitProbe)
+            if let gitDate = modificationDate(of: url), gitDate > (latest ?? .distantPast) {
+                latest = gitDate
+            }
         }
         if let artifactDate = modificationDate(of: artifactURL), artifactDate > (latest ?? .distantPast) {
             latest = artifactDate
@@ -945,7 +1202,7 @@ nonisolated enum CleanRuleEngine {
         return values.isSymbolicLink == true
     }
 
-    nonisolated private static func isDirectory(_ url: URL) -> Bool {
+    nonisolated static func isDirectory(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
               values.isSymbolicLink != true else {
             return false
@@ -960,7 +1217,13 @@ nonisolated enum CleanRuleEngine {
     /// Computes physical allocated bytes (with hard-link inode deduplication) without traversing into symbolic links.
     /// Uses POSIX `fts_open(FTS_PHYSICAL | FTS_NOCHDIR)` rather than `NSDirectoryEnumerator.skipDescendants()`,
     /// because calling `skipDescendants()` on a leaf symlink inside `node_modules/.bin` aborts enumeration of the parent directory.
-    nonisolated static func directoryMetrics(at rootURL: URL) -> (bytes: UInt64, lastModified: Date?) {
+    nonisolated static func directoryMetrics(
+        at rootURL: URL,
+        cancelToken: CleanCancellationToken? = nil
+    ) -> (bytes: UInt64, lastModified: Date?) {
+        if cancelToken?.isCancelled == true {
+            return (0, nil)
+        }
         let path = canonicalPath(rootURL)
         var rootStat = stat()
         guard lstat(path, &rootStat) == 0 else { return (0, nil) }
@@ -974,9 +1237,9 @@ nonisolated enum CleanRuleEngine {
                 + Double(rootStat.st_mtimespec.tv_nsec) / 1_000_000_000
         )
         if mode == S_IFREG {
+            // Use physical st_blocks directly so sparse holes and evicted dataless files report 0 rather than logical st_size.
             let blocks = UInt64(max(rootStat.st_blocks, 0)) &* 512
-            let size = blocks > 0 ? blocks : UInt64(max(rootStat.st_size, 0))
-            return (size, rootMTime)
+            return (blocks, rootMTime)
         }
         guard mode == S_IFDIR else {
             return (0, rootMTime)
@@ -998,6 +1261,9 @@ nonisolated enum CleanRuleEngine {
         var seenHardlinkInodes = Set<UInt64>()
 
         while let entry = fts_read(fts) {
+            if cancelToken?.isCancelled == true {
+                return (0, nil)
+            }
             let info = Int32(entry.pointee.fts_info)
             guard info == FTS_F || info == FTS_D else { continue }
             guard let st = entry.pointee.fts_statp else { continue }
@@ -1011,8 +1277,7 @@ nonisolated enum CleanRuleEngine {
                     }
                 }
                 let blocks = UInt64(max(st.pointee.st_blocks, 0)) &* 512
-                let size = blocks > 0 ? blocks : UInt64(max(st.pointee.st_size, 0))
-                totalBytes &+= size
+                totalBytes &+= blocks
             }
         }
 

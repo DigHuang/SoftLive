@@ -203,4 +203,254 @@ struct StageCanvasViewTests {
             #expect(rep.pixelsHigh >= 580)
         }
     }
+
+    @Test func paletteHandlesMonochromeAndMultipleDistinctArtworks() {
+        let white = NSImage(size: NSSize(width: 24, height: 24))
+        white.lockFocus()
+        NSColor(deviceWhite: 0.96, alpha: 1).setFill()
+        NSBezierPath.fill(NSRect(x: 0, y: 0, width: 24, height: 24))
+        white.unlockFocus()
+
+        let crimson = NSImage(size: NSSize(width: 24, height: 24))
+        crimson.lockFocus()
+        NSColor(deviceRed: 0.92, green: 0.22, blue: 0.35, alpha: 1).setFill()
+        NSBezierPath.fill(NSRect(x: 0, y: 0, width: 24, height: 24))
+        crimson.unlockFocus()
+
+        let whitePalette = StagePalette.cached(for: white)
+        let accentRGB = whitePalette.accent.usingColorSpace(.deviceRGB)
+        #expect((accentRGB?.saturationComponent ?? 1) < 0.12)
+
+        // Two distinct images must stay cached simultaneously without thrashing.
+        let crimsonPalette = StagePalette.cached(for: crimson)
+        #expect(StagePalette.cached(for: white) == whitePalette)
+        #expect(StagePalette.cached(for: crimson) == crimsonPalette)
+        #expect(whitePalette != crimsonPalette)
+    }
+
+    @Test func segmentsEmojisAndAttachesCJKPunctuationWithoutWhitespaceUnits() {
+        #expect(StageWordTimeline.segmentText("你好，世界！") == ["你", "好，", "世", "界！"])
+        #expect(StageWordTimeline.segmentText("❤️晴天👨‍👩‍👧") == ["❤️", "晴", "天", "👨‍👩‍👧"])
+
+        let line = LyricLine(time: 10, text: "晴天", words: [
+            LyricWord(start: 10, duration: 0.2, text: "   "),
+            LyricWord(start: 10.2, duration: 0.6, text: "晴天"),
+        ])
+        let units = StageWordTimeline.effectiveWords(for: line, nextLineTime: nil, perCharacter: true)
+        #expect(units.map(\.text) == ["晴", "天"])
+    }
+
+    @Test func avoidsSongTitleAfterimageAfterInterludeAndClampsMinWindowWordBounds() throws {
+        let track = Track(id: "t1", title: "Song Title", artist: "Artist", album: "", duration: 180, source: .netEase)
+        let playing = PlaybackState(track: track, isPlaying: true, position: 10, at: .now)
+        let artwork = NSImage(size: NSSize(width: 24, height: 24))
+        artwork.lockFocus()
+        NSColor(deviceRed: 0.2, green: 0.5, blue: 0.9, alpha: 1).setFill()
+        NSBezierPath.fill(NSRect(x: 0, y: 0, width: 24, height: 24))
+        artwork.unlockFocus()
+
+        let canvas = StageCanvasView(frame: NSRect(origin: .zero, size: StageWindow.minWindowSize))
+        let line1 = LyricLine(time: 10, text: "第一句词很长测试边界溢出情况", words: [
+            LyricWord(start: 10, duration: 1.5, text: "第一句词很长测试边界溢出情况"),
+        ])
+        canvas.configure(
+            line: line1,
+            nextLineTime: 25,
+            subline: nil,
+            interlude: nil,
+            playback: playing,
+            offset: 0,
+            style: .luminous,
+            sparks: true,
+            palette: .fallback,
+            artwork: nil,
+            isLyricLine: true
+        )
+
+        // Verify all rendered word layers at minimum window size stay inside horizontal bounds.
+        for sublayer in canvas.contentSublayers {
+            #expect(sublayer.position.x >= 0)
+            #expect(sublayer.position.x <= StageWindow.minWindowSize.width)
+            #expect(sublayer.position.y >= 0)
+            #expect(sublayer.position.y <= StageWindow.minWindowSize.height)
+        }
+
+        // Arriving artwork during non-interlude with unchanged palette must not disturb active word count or trigger afterimage.
+        canvas.configure(
+            line: line1,
+            nextLineTime: 25,
+            subline: nil,
+            interlude: nil,
+            playback: playing,
+            offset: 0,
+            style: .luminous,
+            sparks: true,
+            palette: .fallback,
+            artwork: artwork,
+            isLyricLine: true
+        )
+        #expect(canvas.activeAfterimageCount == 0)
+
+        // Transitioning into an interlude (with fallback title) and back out to line 2 must not flash the title afterimage.
+        canvas.configure(
+            line: LyricLine(time: 0, text: track.title),
+            nextLineTime: 25,
+            subline: "下一句",
+            interlude: Interlude(start: 12, end: 25),
+            playback: playing,
+            offset: 0,
+            style: .luminous,
+            sparks: true,
+            palette: .fallback,
+            artwork: artwork,
+            isLyricLine: false
+        )
+        let line2 = LyricLine(time: 25, text: "第二句", words: [LyricWord(start: 25, duration: 1.0, text: "第二句")])
+        canvas.configure(
+            line: line2,
+            nextLineTime: 30,
+            subline: nil,
+            interlude: nil,
+            playback: playing,
+            offset: 0,
+            style: .inkTrace,
+            sparks: true,
+            palette: .fallback,
+            artwork: artwork,
+            isLyricLine: true
+        )
+        #expect(canvas.activeAfterimageCount == 0)
+
+        // Verify StageEffects timeline near burst end stays strictly non-decreasing without duplicate terminal keyTimes.
+        let parent = CALayer()
+        let word = StageWordTimeline.WordUnit(text: "星", start: 10, end: 11)
+        StageEffects.addSparksIfNeeded(
+            in: parent,
+            center: CGPoint(x: 100, y: 100),
+            wordSize: CGSize(width: 40, height: 40),
+            word: word,
+            isLast: true,
+            nowTime: 10.60,
+            remaining: 1.30,
+            isPlaying: true,
+            accent: .white
+        )
+        let sparkLayer = try #require(parent.sublayers?.first)
+        let group = try #require(sparkLayer.animation(forKey: StageWordAnimation.key) as? CAAnimationGroup)
+        let endAnim = try #require(group.animations?.first as? CAKeyframeAnimation)
+        let keyTimes = try #require(endAnim.keyTimes).map(\.doubleValue)
+        for i in 1..<keyTimes.count {
+            #expect(keyTimes[i] > keyTimes[i - 1])
+        }
+    }
+
+    @Test func stageWindowValidatesPerformCloseWithoutTitlebarChromeAndResetsPreference() throws {
+        try withIsolatedStageWindow { window, preferences, appMenu in
+            #expect(window.canBecomeKey)
+            #expect(window.styleMask.contains(.borderless))
+            #expect(window.styleMask.contains(.nonactivatingPanel))
+            #expect(window.styleMask.contains(.resizable))
+            #expect(window.styleMask.contains(.closable))
+            #expect(!window.styleMask.contains(.titled))
+            #expect(window.standardWindowButton(.closeButton) == nil)
+            #expect(window.frameRect(forContentRect: NSRect(origin: .zero, size: StageWindow.defaultSize)).size == StageWindow.defaultSize)
+
+            let mainMenu = appMenu.makeMainMenu()
+            let windowSubmenu = try #require(mainMenu.items[1].submenu)
+            let closeItem = try #require(
+                windowSubmenu.items.first { $0.action == #selector(NSWindow.performClose(_:)) }
+            )
+            let minimizeItem = try #require(
+                windowSubmenu.items.first { $0.action == #selector(NSWindow.performMiniaturize(_:)) }
+            )
+            #expect(window.validateMenuItem(closeItem))
+            #expect(!window.validateMenuItem(minimizeItem))
+
+            window.performClose(nil)
+            #expect(!preferences.showsStageWindow)
+        }
+    }
+
+    @Test func stageWindowHandlesCmdWKeyEquivalentAndIgnoresOtherKeys() throws {
+        try withIsolatedStageWindow { window, preferences, _ in
+            let cmdX = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "x",
+                    charactersIgnoringModifiers: "x",
+                    isARepeat: false,
+                    keyCode: 7
+                )
+            )
+            #expect(!window.performKeyEquivalent(with: cmdX))
+            #expect(preferences.showsStageWindow)
+
+            let cmdShiftW = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command, .shift],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "W",
+                    charactersIgnoringModifiers: "W",
+                    isARepeat: false,
+                    keyCode: 13
+                )
+            )
+            #expect(!window.performKeyEquivalent(with: cmdShiftW))
+            #expect(preferences.showsStageWindow)
+
+            let cmdW = try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [.command],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    characters: "w",
+                    charactersIgnoringModifiers: "w",
+                    isARepeat: false,
+                    keyCode: 13
+                )
+            )
+            #expect(window.performKeyEquivalent(with: cmdW))
+            #expect(!preferences.showsStageWindow)
+        }
+    }
+
+    private func withIsolatedStageWindow(
+        _ body: (StageWindow, Preferences, AppMenu) throws -> Void
+    ) throws {
+        let suiteName = "SoftLiveStageWindowTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let frameAutosaveKey = "NSWindow Frame SoftLiveStageWindow"
+        let previousFrame = UserDefaults.standard.object(forKey: frameAutosaveKey)
+        let previousLanguage = L10n.language
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            if let previousFrame {
+                UserDefaults.standard.set(previousFrame, forKey: frameAutosaveKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: frameAutosaveKey)
+            }
+            L10n.language = previousLanguage
+        }
+
+        let preferences = Preferences(defaults: defaults)
+        preferences.showsStageWindow = true
+        let model = PlaybackModel(sources: [])
+        let appMenu = AppMenu(model: model, preferences: preferences)
+        let window = StageWindow(model: model, preferences: preferences, menu: appMenu.menu)
+        defer { window.orderOut(nil) }
+
+        try body(window, preferences, appMenu)
+    }
 }

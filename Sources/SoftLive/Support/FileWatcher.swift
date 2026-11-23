@@ -34,6 +34,7 @@ final class FileWatcher {
         source?.cancel()
         source = nil
         pendingNotify?.cancel()
+        pendingNotify = nil
     }
 
     isolated deinit {
@@ -48,7 +49,11 @@ final class FileWatcher {
         }
         pendingNotify?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.onChange() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pendingNotify = nil
+                self.onChange()
+            }
         }
         pendingNotify = work
         DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)

@@ -88,7 +88,12 @@ struct StageInkTraceRenderer {
 
         let rowSpacing = baseFontSize * 1.62
         let totalH = CGFloat(rows.count) * rowSpacing
-        let topY = floor((h - totalH) / 2 + totalH - rowSpacing / 2 + 20)
+        let sideInset = max(48, w * 0.08)
+        let minRowY: CGFloat = 148
+        let maxRowY = max(minRowY, h - 78)
+        let rawTopY = floor((h - totalH) / 2 + totalH - rowSpacing / 2 + 20)
+        let spanY = CGFloat(max(0, rows.count - 1)) * rowSpacing
+        let topY = min(maxRowY, max(minRowY + min(spanY, maxRowY - minRowY), rawTopY))
 
         for (ri, rowRange) in rows.enumerated() {
             var rowW: CGFloat = 0
@@ -96,14 +101,22 @@ struct StageInkTraceRenderer {
                 rowW += layouts[idx].size.width + (idx + 1 < rowRange.upperBound ? layouts[idx].margin : 0)
             }
             let rowStagger = (StageWordAnimation.lineRandom(seed: seed + Double(ri) * 19, offset: 8) - 0.5) * (w * 0.16)
-            var cursorX = floor((w - rowW) / 2 + rowStagger)
+            let minCursorX = sideInset
+            let maxCursorX = max(minCursorX, w - sideInset - rowW)
+            var cursorX = min(maxCursorX, max(minCursorX, floor((w - rowW) / 2 + rowStagger)))
             let rowY = topY - CGFloat(ri) * rowSpacing
 
             for idx in rowRange {
                 let word = words[idx]
                 let item = layouts[idx]
                 let isLast = idx == words.count - 1
-                let center = CGPoint(x: cursorX + item.size.width / 2 + item.dx, y: rowY + item.dy)
+                let halfW = item.size.width / 2
+                let minCX = sideInset + halfW
+                let maxCX = max(minCX, w - sideInset - halfW)
+                let center = CGPoint(
+                    x: min(maxCX, max(minCX, cursorX + halfW + item.dx)),
+                    y: min(maxRowY, max(minRowY, rowY + item.dy))
+                )
                 let pad: CGFloat = 24
                 let boxSize = CGSize(width: ceil(item.size.width + pad * 2), height: ceil(item.size.height + pad * 2))
                 let glyphCGPath = StageTextRenderer.glyphPath(for: word.text, font: item.font, in: boxSize)
@@ -122,10 +135,19 @@ struct StageInkTraceRenderer {
                 wireframeLayer.lineJoin = .round
                 wireframeLayer.lineCap = .round
 
-                // 2. Main "描金" Chiseled Gold/Neon Outer Stroke (`goldStrokeLayer`):
-                //    Drawn at 6.8 pt width beneath `interiorMaskLayer` so the outer 3.4 pt forms a clean,
-                //    unbroken silhouette border with zero internal variable-font overlapping lines!
+                // 2. Main "描金" Chiseled Gold/Neon Outer Halo + Stroke (`goldHaloLayer` + `goldStrokeLayer`):
+                //    Drawn beneath `interiorMaskLayer` using a flat outer halo instead of live shadowRadius
+                //    so animating `strokeEnd` never triggers per-frame offscreen Gaussian blur passes.
                 let strokeColor = item.isClimax ? goldAccent : (palette.accent.blended(withFraction: 0.45, of: champagneGold) ?? goldAccent)
+                let goldHaloLayer = CAShapeLayer()
+                goldHaloLayer.frame = wordLayer.bounds
+                goldHaloLayer.path = glyphCGPath
+                goldHaloLayer.fillColor = nil
+                goldHaloLayer.strokeColor = strokeColor.withAlphaComponent(0.28).cgColor
+                goldHaloLayer.lineWidth = item.isClimax ? 13.0 : 11.0
+                goldHaloLayer.lineJoin = .round
+                goldHaloLayer.lineCap = .round
+
                 let goldStrokeLayer = CAShapeLayer()
                 goldStrokeLayer.frame = wordLayer.bounds
                 goldStrokeLayer.path = glyphCGPath
@@ -134,10 +156,6 @@ struct StageInkTraceRenderer {
                 goldStrokeLayer.lineWidth = item.isClimax ? 7.6 : 6.4
                 goldStrokeLayer.lineJoin = .round
                 goldStrokeLayer.lineCap = .round
-                goldStrokeLayer.shadowColor = strokeColor.cgColor
-                goldStrokeLayer.shadowRadius = 15
-                goldStrokeLayer.shadowOpacity = 1.0
-                goldStrokeLayer.shadowOffset = .zero
 
                 // 3. Inner Razor-Sharp Champagne Gold Bevel (`innerGoldLayer`).
                 let innerGoldLayer = CAShapeLayer()
@@ -157,10 +175,6 @@ struct StageInkTraceRenderer {
                 cometLaserLayer.strokeColor = NSColor.white.cgColor
                 cometLaserLayer.lineWidth = 9.0
                 cometLaserLayer.lineCap = .round
-                cometLaserLayer.shadowColor = brightCoreGold.cgColor
-                cometLaserLayer.shadowRadius = 12
-                cometLaserLayer.shadowOpacity = 1.0
-                cometLaserLayer.shadowOffset = .zero
                 cometLaserLayer.opacity = 0
 
                 // 5. Dark-Glass Hollow Interior Mask (`interiorMaskLayer` with `.nonZero` winding):
@@ -194,6 +208,7 @@ struct StageInkTraceRenderer {
                 solidFillLayer.contentsScale = backingScale
 
                 wordLayer.addSublayer(wireframeLayer)
+                wordLayer.addSublayer(goldHaloLayer)
                 wordLayer.addSublayer(goldStrokeLayer)
                 wordLayer.addSublayer(innerGoldLayer)
                 wordLayer.addSublayer(cometLaserLayer)
@@ -211,8 +226,10 @@ struct StageInkTraceRenderer {
                 let rotRad = item.rotDeg * .pi / 180
                 let dirSign: CGFloat = idx.isMultiple(of: 2) ? 1 : -1
 
+                goldHaloLayer.strokeEnd = isPlaying ? 1.0 : strokeProgress
                 goldStrokeLayer.strokeEnd = isPlaying ? 1.0 : strokeProgress
                 innerGoldLayer.strokeEnd = isPlaying ? 1.0 : strokeProgress
+                goldHaloLayer.opacity = isPlaying ? 1.0 : activeOp
                 goldStrokeLayer.opacity = isPlaying ? 1.0 : activeOp
                 innerGoldLayer.opacity = isPlaying ? 1.0 : activeOp
                 interiorMaskLayer.opacity = isPlaying ? 1.0 : activeOp
@@ -304,65 +321,68 @@ struct StageInkTraceRenderer {
                         rotYVals.append(0.0)
                     }
 
-                    let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
+                    if times.count > 1 {
+                        let keyTimes = times.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
 
-                    let strokeAnim = CAKeyframeAnimation(keyPath: "strokeEnd")
-                    strokeAnim.keyTimes = keyTimes
-                    strokeAnim.values = strokeVals.map { NSNumber(value: Double($0)) }
-                    strokeAnim.duration = remaining
+                        let strokeAnim = CAKeyframeAnimation(keyPath: "strokeEnd")
+                        strokeAnim.keyTimes = keyTimes
+                        strokeAnim.values = strokeVals.map { NSNumber(value: Double($0)) }
+                        strokeAnim.duration = remaining
 
-                    let strokeOpAnim = CAKeyframeAnimation(keyPath: "opacity")
-                    strokeOpAnim.keyTimes = keyTimes
-                    strokeOpAnim.values = strokeOpVals.map { NSNumber(value: $0) }
-                    strokeOpAnim.duration = remaining
+                        let strokeOpAnim = CAKeyframeAnimation(keyPath: "opacity")
+                        strokeOpAnim.keyTimes = keyTimes
+                        strokeOpAnim.values = strokeOpVals.map { NSNumber(value: $0) }
+                        strokeOpAnim.duration = remaining
 
-                    let strokeGroup = CAAnimationGroup()
-                    strokeGroup.animations = [strokeAnim, strokeOpAnim]
-                    strokeGroup.duration = remaining
-                    goldStrokeLayer.add(strokeGroup, forKey: StageWordAnimation.key)
-                    innerGoldLayer.add(strokeGroup, forKey: StageWordAnimation.key)
-                    interiorMaskLayer.add(strokeOpAnim, forKey: StageWordAnimation.key)
+                        let strokeGroup = CAAnimationGroup()
+                        strokeGroup.animations = [strokeAnim, strokeOpAnim]
+                        strokeGroup.duration = remaining
+                        goldHaloLayer.add(strokeGroup, forKey: StageWordAnimation.key)
+                        goldStrokeLayer.add(strokeGroup, forKey: StageWordAnimation.key)
+                        innerGoldLayer.add(strokeGroup, forKey: StageWordAnimation.key)
+                        interiorMaskLayer.add(strokeOpAnim, forKey: StageWordAnimation.key)
 
-                    let fillOpAnim = CAKeyframeAnimation(keyPath: "opacity")
-                    fillOpAnim.keyTimes = keyTimes
-                    fillOpAnim.values = fillOpVals.map { NSNumber(value: $0) }
-                    fillOpAnim.duration = remaining
-                    solidFillLayer.add(fillOpAnim, forKey: StageWordAnimation.key)
+                        let fillOpAnim = CAKeyframeAnimation(keyPath: "opacity")
+                        fillOpAnim.keyTimes = keyTimes
+                        fillOpAnim.values = fillOpVals.map { NSNumber(value: $0) }
+                        fillOpAnim.duration = remaining
+                        solidFillLayer.add(fillOpAnim, forKey: StageWordAnimation.key)
 
-                    let cometStartAnim = CAKeyframeAnimation(keyPath: "strokeStart")
-                    cometStartAnim.keyTimes = keyTimes
-                    cometStartAnim.values = cometStartVals.map { NSNumber(value: Double($0)) }
-                    cometStartAnim.duration = remaining
+                        let cometStartAnim = CAKeyframeAnimation(keyPath: "strokeStart")
+                        cometStartAnim.keyTimes = keyTimes
+                        cometStartAnim.values = cometStartVals.map { NSNumber(value: Double($0)) }
+                        cometStartAnim.duration = remaining
 
-                    let cometEndAnim = CAKeyframeAnimation(keyPath: "strokeEnd")
-                    cometEndAnim.keyTimes = keyTimes
-                    cometEndAnim.values = cometEndVals.map { NSNumber(value: Double($0)) }
-                    cometEndAnim.duration = remaining
+                        let cometEndAnim = CAKeyframeAnimation(keyPath: "strokeEnd")
+                        cometEndAnim.keyTimes = keyTimes
+                        cometEndAnim.values = cometEndVals.map { NSNumber(value: Double($0)) }
+                        cometEndAnim.duration = remaining
 
-                    let cometOpAnim = CAKeyframeAnimation(keyPath: "opacity")
-                    cometOpAnim.keyTimes = keyTimes
-                    cometOpAnim.values = cometOpVals.map { NSNumber(value: $0) }
-                    cometOpAnim.duration = remaining
+                        let cometOpAnim = CAKeyframeAnimation(keyPath: "opacity")
+                        cometOpAnim.keyTimes = keyTimes
+                        cometOpAnim.values = cometOpVals.map { NSNumber(value: $0) }
+                        cometOpAnim.duration = remaining
 
-                    let cometGroup = CAAnimationGroup()
-                    cometGroup.animations = [cometStartAnim, cometEndAnim, cometOpAnim]
-                    cometGroup.duration = remaining
-                    cometLaserLayer.add(cometGroup, forKey: StageWordAnimation.key)
+                        let cometGroup = CAAnimationGroup()
+                        cometGroup.animations = [cometStartAnim, cometEndAnim, cometOpAnim]
+                        cometGroup.duration = remaining
+                        cometLaserLayer.add(cometGroup, forKey: StageWordAnimation.key)
 
-                    let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
-                    scaleAnim.keyTimes = keyTimes
-                    scaleAnim.values = scaleVals.map { NSNumber(value: Double($0)) }
-                    scaleAnim.duration = remaining
+                        let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+                        scaleAnim.keyTimes = keyTimes
+                        scaleAnim.values = scaleVals.map { NSNumber(value: Double($0)) }
+                        scaleAnim.duration = remaining
 
-                    let rotYAnim = CAKeyframeAnimation(keyPath: "transform.rotation.y")
-                    rotYAnim.keyTimes = keyTimes
-                    rotYAnim.values = rotYVals.map { NSNumber(value: Double($0)) }
-                    rotYAnim.duration = remaining
+                        let rotYAnim = CAKeyframeAnimation(keyPath: "transform.rotation.y")
+                        rotYAnim.keyTimes = keyTimes
+                        rotYAnim.values = rotYVals.map { NSNumber(value: Double($0)) }
+                        rotYAnim.duration = remaining
 
-                    let wordGroup = CAAnimationGroup()
-                    wordGroup.animations = [scaleAnim, rotYAnim]
-                    wordGroup.duration = remaining
-                    wordLayer.add(wordGroup, forKey: StageWordAnimation.key)
+                        let wordGroup = CAAnimationGroup()
+                        wordGroup.animations = [scaleAnim, rotYAnim]
+                        wordGroup.duration = remaining
+                        wordLayer.add(wordGroup, forKey: StageWordAnimation.key)
+                    }
                 }
 
                 // Only trigger the expanding ghost echo + starburst on climax/final characters, not on every character!
@@ -393,29 +413,33 @@ struct StageInkTraceRenderer {
                             eScales.append(1.12)
                             eOps.append(0.90)
                         }
-                        eTimes.append(echoEnd)
-                        eScales.append(1.95)
-                        eOps.append(0.0)
-                        if lineEnd > echoEnd {
+                        if echoEnd > (eTimes.last ?? nowTime) {
+                            eTimes.append(echoEnd)
+                            eScales.append(1.95)
+                            eOps.append(0.0)
+                        }
+                        if lineEnd > (eTimes.last ?? nowTime) {
                             eTimes.append(lineEnd)
                             eScales.append(1.95)
                             eOps.append(0.0)
                         }
-                        let eKeyTimes = eTimes.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
-                        let eScaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
-                        eScaleAnim.keyTimes = eKeyTimes
-                        eScaleAnim.values = eScales.map { NSNumber(value: Double($0)) }
-                        eScaleAnim.duration = remaining
+                        if eTimes.count > 1 {
+                            let eKeyTimes = eTimes.map { NSNumber(value: min(1, max(0, ($0 - nowTime) / remaining))) }
+                            let eScaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+                            eScaleAnim.keyTimes = eKeyTimes
+                            eScaleAnim.values = eScales.map { NSNumber(value: Double($0)) }
+                            eScaleAnim.duration = remaining
 
-                        let eOpAnim = CAKeyframeAnimation(keyPath: "opacity")
-                        eOpAnim.keyTimes = eKeyTimes
-                        eOpAnim.values = eOps.map { NSNumber(value: $0) }
-                        eOpAnim.duration = remaining
+                            let eOpAnim = CAKeyframeAnimation(keyPath: "opacity")
+                            eOpAnim.keyTimes = eKeyTimes
+                            eOpAnim.values = eOps.map { NSNumber(value: $0) }
+                            eOpAnim.duration = remaining
 
-                        let eGroup = CAAnimationGroup()
-                        eGroup.animations = [eScaleAnim, eOpAnim]
-                        eGroup.duration = remaining
-                        echoOutlineLayer.add(eGroup, forKey: StageWordAnimation.key)
+                            let eGroup = CAAnimationGroup()
+                            eGroup.animations = [eScaleAnim, eOpAnim]
+                            eGroup.duration = remaining
+                            echoOutlineLayer.add(eGroup, forKey: StageWordAnimation.key)
+                        }
                     }
 
                     if sparks {

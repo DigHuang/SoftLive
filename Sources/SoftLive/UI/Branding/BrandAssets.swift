@@ -15,7 +15,7 @@ enum BrandAssets {
     }()
 
     /// Full-color app icon (`Sync / 同频 × 霜光`) for brand entry and product overview surfaces.
-    static var appIcon: NSImage {
+    static let appIcon: NSImage = {
         if let named = NSImage(named: "AppIcon") {
             return named
         }
@@ -24,5 +24,5 @@ enum BrandAssets {
             return icns
         }
         return NSApp.applicationIconImage ?? syncTemplate
-    }
+    }()
 }

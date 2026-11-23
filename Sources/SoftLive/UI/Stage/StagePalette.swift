@@ -16,19 +16,27 @@ struct StagePalette: Equatable {
         accent: NSColor(deviceRed: 0.52, green: 0.82, blue: 1.0, alpha: 1)
     )
 
-    private static var lastCachedID: ObjectIdentifier?
-    private static var lastCachedPalette: StagePalette = .fallback
+    private final class PaletteEntry: NSObject {
+        let palette: StagePalette
+        init(_ palette: StagePalette) { self.palette = palette }
+    }
 
-    /// Returns a palette for `image`, reusing the last extracted result while the `NSImage` instance is unchanged.
+    private static let cache = NSMapTable<NSImage, PaletteEntry>(
+        keyOptions: [.weakMemory, .objectPointerPersonality],
+        valueOptions: .strongMemory
+    )
+
+    /// Returns a palette for `image`, reusing extracted results while each `NSImage` instance stays alive.
     static func cached(for image: NSImage?) -> StagePalette {
         guard let image else { return .fallback }
-        let id = ObjectIdentifier(image)
-        if id == lastCachedID {
-            return lastCachedPalette
+        if let entry = cache.object(forKey: image) {
+            return entry.palette
         }
         let extracted = extract(from: image)
-        lastCachedID = id
-        lastCachedPalette = extracted
+        if cache.count >= 16 {
+            cache.removeAllObjects()
+        }
+        cache.setObject(PaletteEntry(extracted), forKey: image)
         return extracted
     }
 
@@ -64,12 +72,15 @@ struct StagePalette: Equatable {
         var avgR: CGFloat = 0
         var avgG: CGFloat = 0
         var avgB: CGFloat = 0
-        let count = CGFloat(sampleSize * sampleSize)
+        var opaqueCount = 0
 
         for i in stride(from: 0, to: pixels.count, by: 4) {
-            let r = CGFloat(pixels[i]) / 255
-            let g = CGFloat(pixels[i + 1]) / 255
-            let b = CGFloat(pixels[i + 2]) / 255
+            let alpha = CGFloat(pixels[i + 3]) / 255
+            guard alpha > 0.05 else { continue }
+            let r = min(1, CGFloat(pixels[i]) / 255 / alpha)
+            let g = min(1, CGFloat(pixels[i + 1]) / 255 / alpha)
+            let b = min(1, CGFloat(pixels[i + 2]) / 255 / alpha)
+            opaqueCount += 1
             avgR += r
             avgG += g
             avgB += b
@@ -85,6 +96,8 @@ struct StagePalette: Equatable {
             swatches.append(Swatch(r: r, g: g, b: b, score: score))
         }
 
+        guard opaqueCount > 0 else { return .fallback }
+        let count = CGFloat(opaqueCount)
         avgR /= count
         avgG /= count
         avgB /= count
@@ -121,6 +134,10 @@ struct StagePalette: Equatable {
         var a: CGFloat = 1
         let rgb = color.usingColorSpace(.deviceRGB) ?? color
         rgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        // Keep monochrome artwork neutral instead of boosting achromatic hue 0 into pink/red.
+        if s < 0.08 {
+            return NSColor(deviceHue: 0.60, saturation: min(s, 0.06), brightness: min(0.96, max(0.84, b * 1.15)), alpha: 1)
+        }
         let targetS = min(0.85, max(0.42, s * 1.15))
         let targetB = min(1.0, max(0.84, b * 1.25))
         return NSColor(deviceHue: h, saturation: targetS, brightness: targetB, alpha: 1)

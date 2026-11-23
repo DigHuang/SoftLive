@@ -48,6 +48,18 @@ SoftLive 的代码由 agent 编写和验证。每当有改动需要返工、结�
 - 2026-11-09 实现 `CleanRuleEngine` 时：① `URL.appending(path:directoryHint: .isDirectory).standardizedFileURL.path(percentEncoded: false)` 返回带末尾 `/` 的路径，直接拼接 `root + "/"` 变成双斜杠 `//` 导致 `canSafelyTrash` 误拒合法目录；② 本机运行中的飞书（`com.electron.lark`）在 `~/Library/Caches` 下使用产品词根派生名 `LarkShell`，仅按完整 Bundle ID 匹配会漏过；③ 在 `FileManager.default.enumerator` 遍历 `node_modules` 遇到 `.bin/*` 叶子符号链接时调用 `enumerator.skipDescendants()`，导致 `NSDirectoryEnumerator` 直接中止父目录 `node_modules` 的剩余遍历并返回 `0 MB`；④ 递归扫描 monorepo 子目录（如 `FastGPT-1/projects/*`）时未在顶层 `.git` 仓库根拦截活跃仓库，导致把昨天刚提交过的 monorepo 子包误判为闲置项目；⑤ `NSHostingView` 设 `sizingOptions = []` 时会在每次布局过程把宿主 `NSWindow` 的 `minSize` / `contentMinSize` 重置为 `(0, 0)`，导致用户可把窗口缩到最小尺寸以下产生上下裁切，必须在 `NSWindow` 子类中重写 `minSize` / `contentMinSize` 属性与 `windowWillResize`。统一改为 `canonicalPath`、产品词根前缀匹配、`fts_open(FTS_PHYSICAL | FTS_NOCHDIR)` 硬链去重统计、`.git` 根级活跃短路及重写窗口最小尺寸属性后全部修复。
 - 出现 1 次。
 
+**高频系统监控采样调用 `mach_host_self()` 时必须缓存或成对释放 Mach 端口，不能每拍重复调用而不调用 `mach_port_deallocate`。**
+- `mach_host_self()` 每次调用都会在当前进程内递增 Mach send-right 引用计数；若 `CPUSampler` 与 `MemorySampler` 在每秒轮询中持续调用却既不缓存也不释放，会造成 Mach send-right uref 持续泄漏。改为静态缓存 `mach_host_self()` 句柄复用。
+- 出现 1 次。
+
+**在 macOS 上检测文件修改时间变化时，不能对长期持有的 `static let` `URL` 实例读取 `resourceValues(forKeys: [.contentModificationDateKey])`。**
+- `Foundation.URL` 会在实例上缓存先前查询过的 `URLResourceValues` 元数据；在轮询或事件校验中复用 `static let` `URL` 读取 `.contentModificationDateKey` 会返回过期时间戳，导致漏判文件更新。应使用 `FileManager.default.attributesOfItem(atPath:)` 或 `stat` 直接读取最新文件系统属性。
+- 出现 1 次。
+
+**并发扫描磁盘时，必须把受 macOS TCC 授权弹窗保护的目录（`~/Documents`、`~/Downloads`）与零授权目录（`~/Library`、开发工具缓存）隔离，不能放进同一个 `DispatchQueue.concurrentPerform` 同步栅栏。**
+- 2026-11-21 真机验证发现，在锁屏或用户尚未响应系统授权弹窗时，访问 `~/Documents/GitHub` 或 `~/Downloads` 的工作线程会在 `__open` 阻塞等待 `tccd` / `UserNotificationCenter`；若与 `~/Library` 缓存在同一个 `concurrentPerform` 栅栏内同步等待，会导致整个空间清理页面长期卡死在「扫描中…」，四张分类卡片全部停在 `--`。拆分为两阶段渐进扫描（先并发扫零 TCC 目录并立即渲染结果，再独立异步扫描 `~/Documents/GitHub` 与 `~/Downloads` 并增量合并），同时在 `Info.plist` 与 `InfoPlist.strings` 补齐 `NSDocumentsFolderUsageDescription` / `NSDownloadsFolderUsageDescription` 后解决。
+- 出现 1 次。
+
 ## 边界与方案
 
 **提议方案之前，先判断它是否在绕过保护：看被绕开的是什么，而不是手段像不像破解。**

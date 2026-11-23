@@ -20,7 +20,7 @@ enum StageTextRenderer {
             let count = CTRunGetGlyphCount(run)
             guard count > 0 else { continue }
             let attrs = CTRunGetAttributes(run) as NSDictionary
-            let runFont = (attrs[kCTFontAttributeName] as! CTFont?) ?? (font as CTFont)
+            let runFont = (attrs[kCTFontAttributeName] as? NSFont as CTFont?) ?? (font as CTFont)
             var glyphs = [CGGlyph](repeating: 0, count: count)
             var positions = [CGPoint](repeating: .zero, count: count)
             CTRunGetGlyphs(run, CFRangeMake(0, count), &glyphs)

@@ -21,12 +21,17 @@ enum DesktopLyrics {
             NSPoint(x: screen.midX - size.width / 2, y: screen.minY + 48)
         }
         interaction.attach(to: panel)
-        return panel.bind {
-            let isVisible = preferences.showsDesktopLyrics && model.playback != nil
-            if !isVisible { interaction.reset() }
-            let clicksThrough = preferences.desktopLyricsLocked && !interaction.isCommandHeld && !interaction.isAwake
-            return (isVisible, clicksThrough)
-        }
+        return panel.bind(
+            {
+                let isVisible = preferences.showsDesktopLyrics && model.playback != nil
+                guard isVisible else { return (false, true) }
+                let clicksThrough = preferences.desktopLyricsLocked && !interaction.isAwake
+                return (true, clicksThrough)
+            },
+            onVisibilityChange: { visible in
+                if !visible { interaction.reset() }
+            }
+        )
     }
 }
 
@@ -34,7 +39,7 @@ enum DesktopLyrics {
 /// when the cursor passes over them without ⌘, and wake up only when ⌘ is held.
 @Observable
 final class LyricsInteraction {
-    var isCommandHeld = false
+    @ObservationIgnored var isCommandHeld = false
     var isAwake = false
 
     @ObservationIgnored private weak var panel: NSPanel?
@@ -50,9 +55,10 @@ final class LyricsInteraction {
             Task { @MainActor [weak self] in self?.reevaluate(command: command, buttonsPressed: buttonsPressed) }
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp]) { [weak self] event in
+            guard let self, let panel = self.panel, panel.isVisible else { return event }
             let command = event.modifierFlags.contains(.command)
             let buttonsPressed = event.type != .leftMouseUp && NSEvent.pressedMouseButtons != 0
-            MainActor.assumeIsolated { self?.reevaluate(command: command, buttonsPressed: buttonsPressed) }
+            MainActor.assumeIsolated { self.reevaluate(command: command, buttonsPressed: buttonsPressed) }
             return event
         }
     }
@@ -97,7 +103,7 @@ final class LyricsInteraction {
 
 struct DesktopLyricsView: View {
     static let cardWidth: CGFloat = 640
-    static let cardHeight: CGFloat = 116
+    static let cardHeight: CGFloat = 122
     static let margin: CGFloat = 12
     static let panelSize = NSSize(width: cardWidth + 2 * margin, height: cardHeight + 2 * margin)
     private static let offsetStep: TimeInterval = 0.5
@@ -132,71 +138,75 @@ struct DesktopLyricsView: View {
     }
 
     var body: some View {
-        let sizePreset = preferences.desktopLyricsSize
-        let sublineText = displayedSubline
+        if !preferences.showsDesktopLyrics || (model.playback == nil && !interaction.isAwake) {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            let sizePreset = preferences.desktopLyricsSize
+            let sublineText = displayedSubline
 
-        VStack(spacing: 4) {
-            controlBar
-                .opacity(showsControls ? 1 : 0)
-                .allowsHitTesting(showsControls)
+            VStack(spacing: 4) {
+                controlBar
+                    .opacity(showsControls ? 1 : 0)
+                    .allowsHitTesting(showsControls)
 
-            KaraokeText(
-                line: activeLine,
-                model: model,
-                fontSize: sizePreset.mainFontSize,
-                weight: .semibold,
-                color: .white,
-                centered: true,
-                hasShadow: true
-            )
-            .allowsHitTesting(false)
+                KaraokeText(
+                    line: activeLine,
+                    model: model,
+                    fontSize: sizePreset.mainFontSize,
+                    weight: .semibold,
+                    color: .white,
+                    centered: true,
+                    hasShadow: true
+                )
+                .allowsHitTesting(false)
 
-            if preferences.desktopLyricsSublineMode != .singleLine {
-                Text(sublineText ?? " ")
-                    .font(.system(size: sizePreset.sublineFontSize, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.76))
-                    .shadow(color: .black.opacity(0.55), radius: 2, y: 0.8)
-                    .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
-                    .frame(height: 20)
-                    .opacity(sublineText == nil ? 0 : 1)
-                    .allowsHitTesting(false)
-            }
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.5)
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
-        .frame(width: Self.cardWidth, height: Self.cardHeight)
-        .background {
-            Group {
-                if showsControls {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(Color.black.opacity(0.24))
-                        Color.clear
-                            .glassEffect(.regular, in: .rect(cornerRadius: 22))
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
-                    }
-                } else {
-                    Color.clear
+                if preferences.desktopLyricsSublineMode != .singleLine {
+                    Text(sublineText ?? " ")
+                        .font(.system(size: sizePreset.sublineFontSize, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.76))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .shadow(color: .black.opacity(0.55), radius: 2, y: 0.8)
+                        .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+                        .frame(height: 21)
+                        .opacity(sublineText == nil ? 0 : 1)
+                        .allowsHitTesting(false)
                 }
             }
-            .contentShape(.rect(cornerRadius: 22))
-            .onTapGesture(count: 2) {
-                model.nextTrack()
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+            .frame(width: Self.cardWidth, height: Self.cardHeight)
+            .background {
+                Group {
+                    if showsControls {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(Color.black.opacity(0.24))
+                            Color.clear
+                                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+                        }
+                    } else {
+                        Color.clear
+                    }
+                }
+                .contentShape(.rect(cornerRadius: 22))
+                .onTapGesture(count: 2) {
+                    model.nextTrack()
+                }
             }
+            .onHover { hovering in
+                interaction.setHovered(hovering, isLocked: preferences.desktopLyricsLocked)
+            }
+            .onChange(of: preferences.desktopLyricsLocked) { _, isLocked in
+                if isLocked { interaction.isAwake = false }
+            }
+            .padding(Self.margin)
+            .frame(width: Self.panelSize.width, height: Self.panelSize.height)
+            .animation(.easeInOut(duration: 0.18), value: showsControls)
         }
-        .onHover { hovering in
-            interaction.setHovered(hovering, isLocked: preferences.desktopLyricsLocked)
-        }
-        .onChange(of: preferences.desktopLyricsLocked) { _, isLocked in
-            if isLocked { interaction.isAwake = false }
-        }
-        .padding(Self.margin)
-        .frame(width: Self.panelSize.width, height: Self.panelSize.height)
-        .animation(.easeInOut(duration: 0.18), value: showsControls)
     }
 
     private var controlBar: some View {
@@ -212,6 +222,7 @@ struct DesktopLyricsView: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.84))
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .allowsHitTesting(false)
 
@@ -240,7 +251,7 @@ struct DesktopLyricsView: View {
             HStack(spacing: 5) {
                 barButton(
                     icon: model.isPlaying ? "pause.fill" : "play.fill",
-                    help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Resume"),
+                    help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Play"),
                     action: model.togglePlayPause
                 )
                 barButton(
@@ -269,6 +280,7 @@ struct DesktopLyricsView: View {
         Text(title)
             .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
             .foregroundStyle(isHighlighted ? .black : .white.opacity(0.88))
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
             .frame(height: 22)
             .background(

@@ -14,9 +14,9 @@
 1. **网易云曲目**：直接用歌曲 ID 请求 `/api/song/lyric`，参数 `lv=-1&tv=-1&yv=-1`。
    - 有 `yrc` 就用逐字歌词（[`YRCParser`](../../Sources/SoftLive/Lyrics/Parsers/YRCParser.swift)，将词间独立纯空格归并到前一词末尾、丢弃行首行尾空白词，并以末词结束时间 `lastWord.start + max(lastWord.duration, 0.5)` 作为行结束时间 `endTime`——实测网易云 YRC 行头 `[startMs, durationMs]` 常把句间间奏一并算进 `durationMs` 直至下一句起点，不能用行头 `durationMs` 判断唱完时刻），否则用 `lrc`（[`LRCParser`](../../Sources/SoftLive/Lyrics/Parsers/LRCParser.swift)）。
    - `tlyric` 是翻译。
-2. **其他曲目**：先搜网易云，再搜 LRCLIB，由 [`TrackMatcher`](../../Sources/SoftLive/Lyrics/TrackMatcher.swift) 选出最匹配的结果。
-   - 先清洗标题，去掉 `(Live)`、`[Remastered]`、`- 2011 Remaster`、`feat.` 等后缀。
-   - 再按「标题 > 歌手 > 时长」打分；时长相差超过 8 秒的候选直接排除。
+2. **其他曲目**：先搜网易云，再搜 LRCLIB（网易云非取消请求失败时自动回退到 LRCLIB，仅两者均无有效结果或任务取消时按规则不缓存错误），由 [`TrackMatcher`](../../Sources/SoftLive/Lyrics/TrackMatcher.swift) 选出最匹配的结果。
+   - 先清洗标题，去掉 `(Live)`、`[Remastered]`、`- 2011 Remaster`、`feat.` 等后缀（若整行仅剩括号内容则搜索关键词保留原标题）。
+   - 再按「标题 > 歌手 > 时长」打分；空规范化标题直接排除，空歌手不触发歌手加分，时长相差超过 8 秒的候选直接排除。
 3. **翻译对齐与空行过滤**：`Lyrics.init` 先过滤掉纯空白行（实测网易云 LRC 如 `3445957923` 常在每段末句开唱后仅 `0.30–0.74s` 处插入空时间标签 `[mm:ss.xx]` 作为段落空行，保留空行或将其当成句尾标记会在歌词刚唱一个字时就截断当前句），再把每条翻译挂到时间最近的歌词行（相差不超过 0.75 秒，每行最多一条）。
    逐字歌词每行的开始时间和翻译的时间戳本来就有偏差，所以需要这个容差。
 4. **前奏、演职员表与间奏识别**：
@@ -37,4 +37,4 @@
 
 ## 验证
 
-- `swift test --filter "LRCParserTests|YRCParserTests|TrackMatcherTests"`
+- `swift test --filter "LRCParserTests|YRCParserTests|TrackMatcherTests|LyricsServiceTests"`

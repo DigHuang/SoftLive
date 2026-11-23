@@ -11,6 +11,9 @@ final class StageWindow: NSPanel {
     static let minWindowSize = NSSize(width: 680, height: 440)
     private static let frameAutosave = "SoftLiveStageWindow"
 
+    private let state = StageWindowState()
+    private let onRequestClose: () -> Void
+    private var observeTask: Task<Void, Never>?
     private var savedWindowedFrame: NSRect?
     private(set) var isZoomedToScreen = false
 
@@ -25,10 +28,10 @@ final class StageWindow: NSPanel {
     }
 
     init(model: PlaybackModel, preferences: Preferences, menu: NSMenu) {
-        let state = StageWindowState()
+        self.onRequestClose = { [preferences] in preferences.showsStageWindow = false }
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable, .closable],
             backing: .buffered,
             defer: true
         )
@@ -46,14 +49,24 @@ final class StageWindow: NSPanel {
             preferences: preferences,
             windowState: state,
             onToggleZoom: { [weak self] in self?.toggleScreenZoom() },
-            onClose: { [preferences] in preferences.showsStageWindow = false }
+            onClose: onRequestClose
         )
         let host = StageHostingView(rootView: rootView)
         host.sizingOptions = []
         host.menu = menu
         contentView = host
 
-        if !setFrameUsingName(Self.frameAutosave), let screen = NSScreen.main?.visibleFrame {
+        if setFrameUsingName(Self.frameAutosave) {
+            let clamped = Self.clampedFrame(frame, minSize: Self.minWindowSize) { screen, size in
+                NSPoint(
+                    x: round(screen.midX - size.width / 2),
+                    y: round(screen.midY - size.height / 2)
+                )
+            }
+            if clamped != frame {
+                setFrame(clamped, display: false)
+            }
+        } else if let screen = NSScreen.main?.visibleFrame {
             let origin = NSPoint(
                 x: round(screen.midX - Self.defaultSize.width / 2),
                 y: round(screen.midY - Self.defaultSize.height / 2)
@@ -62,13 +75,20 @@ final class StageWindow: NSPanel {
         }
         setFrameAutosaveName(Self.frameAutosave)
 
-        Task { [weak self] in
+        observeTask = Task { [weak self] in
+            var lastVisible: Bool?
             for await isVisible in Observations({ preferences.showsStageWindow }) {
                 guard let self else { return }
+                guard lastVisible != isVisible else { continue }
+                lastVisible = isVisible
                 if !isVisible { state.isHovered = false }
                 self.contentView?.isHidden = !isVisible
                 if isVisible {
-                    self.orderFrontRegardless()
+                    if NSApp.isActive {
+                        self.makeKeyAndOrderFront(nil)
+                    } else {
+                        self.orderFrontRegardless()
+                    }
                 } else {
                     self.orderOut(nil)
                 }
@@ -76,16 +96,46 @@ final class StageWindow: NSPanel {
         }
     }
 
+    isolated deinit {
+        observeTask?.cancel()
+    }
+
     override var canBecomeKey: Bool { true }
+
+    // Borderless panels default to returning false for `performClose:` even with `.closable` set.
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performClose(_:)) {
+            return true
+        }
+        return super.validateMenuItem(menuItem)
+    }
+
+    override func performClose(_ sender: Any?) {
+        onRequestClose()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "w" {
+            performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     func toggleScreenZoom() {
         guard let screen = (self.screen ?? NSScreen.main)?.visibleFrame else { return }
         if isZoomedToScreen, let restore = savedWindowedFrame {
             isZoomedToScreen = false
-            setFrame(restore, display: true, animate: true)
+            state.isZoomed = false
+            let clamped = Self.clampedFrame(restore, minSize: Self.minWindowSize)
+            setFrame(clamped, display: true, animate: true)
+            setFrameAutosaveName(Self.frameAutosave)
         } else {
             savedWindowedFrame = frame
             isZoomedToScreen = true
+            state.isZoomed = true
+            setFrameAutosaveName("")
             setFrame(screen, display: true, animate: true)
         }
     }
@@ -94,6 +144,7 @@ final class StageWindow: NSPanel {
 @Observable
 final class StageWindowState {
     var isHovered = false
+    var isZoomed = false
 
     func palette(for artwork: NSImage?) -> StagePalette {
         StagePalette.cached(for: artwork)
@@ -106,6 +157,9 @@ private final class StageHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        if NSApp.isActive {
+            window?.makeKey()
+        }
         mouseDownPoint = event.locationInWindow
         super.mouseDown(with: event)
     }
@@ -163,13 +217,21 @@ struct StageWindowView: View {
         return lyrics.lines[nextIdx].time
     }
 
-    var body: some View {
-        let isVisible = preferences.showsStageWindow
-        let palette = windowState.palette(for: activeArtwork)
-        let showHUD = windowState.isHovered || model.playback == nil
+    private var hasLyricLine: Bool {
+        if let line = model.currentLine, !line.text.isEmpty {
+            return true
+        }
+        return false
+    }
 
-        ZStack {
-            if isVisible {
+    var body: some View {
+        if !preferences.showsStageWindow {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            let palette = windowState.palette(for: activeArtwork)
+            let showHUD = windowState.isHovered || model.playback == nil
+
+            ZStack {
                 StageCanvasRepresentable(
                     line: activeLine,
                     nextLineTime: nextLineTime,
@@ -180,7 +242,8 @@ struct StageWindowView: View {
                     style: preferences.stageStyle,
                     sparks: preferences.stageSparks,
                     palette: palette,
-                    artwork: activeArtwork
+                    artwork: activeArtwork,
+                    isLyricLine: hasLyricLine
                 )
 
                 Color.clear
@@ -203,22 +266,20 @@ struct StageWindowView: View {
                         .allowsHitTesting(showHUD)
                 }
                 .padding(18)
-            } else {
-                Color.clear
             }
-        }
-        .clipShape(.rect(cornerRadius: 26))
-        .overlay {
-            RoundedRectangle(cornerRadius: 26)
-                .strokeBorder(.white.opacity(0.14), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
-        .onHover { hovering in
-            if windowState.isHovered != hovering {
-                windowState.isHovered = hovering
+            .clipShape(.rect(cornerRadius: 26))
+            .overlay {
+                RoundedRectangle(cornerRadius: 26)
+                    .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                    .allowsHitTesting(false)
             }
+            .onHover { hovering in
+                if windowState.isHovered != hovering {
+                    windowState.isHovered = hovering
+                }
+            }
+            .animation(.easeInOut(duration: 0.22), value: showHUD)
         }
-        .animation(.easeInOut(duration: 0.22), value: showHUD)
     }
 
     // MARK: - Top Style & Window HUD
@@ -229,8 +290,8 @@ struct StageWindowView: View {
             HStack(spacing: 8) {
                 hudCircleButton(icon: "xmark", help: L10n.tr("关闭演示舞台", "Close Stage Window"), action: onClose)
                 hudCircleButton(
-                    icon: "arrow.up.left.and.arrow.down.right",
-                    help: L10n.tr("切换最大化舞台", "Toggle Maximize Stage"),
+                    icon: windowState.isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                    help: windowState.isZoomed ? L10n.tr("还原舞台窗口", "Restore Stage Window") : L10n.tr("切换最大化舞台", "Toggle Maximize Stage"),
                     action: onToggleZoom
                 )
             }
@@ -402,6 +463,7 @@ private struct StageCanvasRepresentable: NSViewRepresentable {
     let sparks: Bool
     let palette: StagePalette
     let artwork: NSImage?
+    let isLyricLine: Bool
 
     func makeNSView(context: Context) -> StageCanvasView {
         StageCanvasView()
@@ -418,7 +480,8 @@ private struct StageCanvasRepresentable: NSViewRepresentable {
             style: style,
             sparks: sparks,
             palette: palette,
-            artwork: artwork
+            artwork: artwork,
+            isLyricLine: isLyricLine
         )
     }
 }

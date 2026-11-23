@@ -17,13 +17,13 @@
 
 ## 运行路径
 
-1. **判断当前在播哪一次**：缓存目录或数据库变化，或 LevelDB 报告了新曲目（`currentPlay == nil || report.songID != currentPlay?.songID`）时调用 `reload()`，由 `NetEasePlay.latest` 选出当前这次播放（同一曲目每 1.8 秒的 `lastPlaying` 进度汇报直接进入第 4 步校准，不重复扫描 SQLite 与缓存目录）：
-   - 取缓存里创建时间最新的那首歌（`NetEasePlayCache.starts()` 按目录 `contentModificationDateKey` 缓存结果）。
+1. **判断当前在播哪一次**：缓存目录或数据库变化，或 LevelDB 报告了新曲目（`currentPlay == nil || report.songID != currentPlay?.songID`）或当前处于占位曲目等待补全时调用 `reload()`，由 `NetEasePlay.latest` 选出当前这次播放（同一曲目每 1.8 秒的 `lastPlaying` 进度汇报直接进入第 4 步校准，不重复扫描 SQLite 与缓存目录）：
+   - 取缓存里创建时间最新的那首歌（`NetEasePlayCache.starts()` 通过 `FileManager.attributesOfItem` 读取目录最新修改时间缓存结果，避免 `URL.resourceValues` 的实例缓存返回过期时间戳）。
    - 历史表最新一行如果比缓存里同一首歌的开始时间晚、但不超过这首歌的时长，视为同一次播放，开始时间以缓存为准；否则按历史表的时间作为一次新的播放。
    - LevelDB 报告的歌（`lastPlaying` 或 `playingInfo` 切歌），只有缓存和历史都没看到、且推算的开始时间比当前歌晚 3 秒以上时才采用（`reportLag`）。
      因为换歌后网页可能还会短暂报告上一首。
    - 取开始时间最晚的那个。
-2. **是不是新的一次播放**：`isNewPlay` 判断。同一首歌在当前播放位置尚未到达歌曲结尾前，后续由历史表晚写或暂停后恢复带来的开始时间重算都视为同一次播放，进度交给第 4 步校准。
+2. **是不是新的一次播放**：`isNewPlay` 判断。同一首歌在当前播放位置尚未到达歌曲结尾前，后续由历史表晚写或暂停后恢复带来的开始时间重算都视为同一次播放，进度交给第 4 步校准；若当前因离线先发布了占位曲目，后续本地历史或 `playingInfo` 补齐了同一首歌的真实元数据，则原地升级 `state.track` 与 `recentTrack`。
    是新播放时：优先从历史表行或 `playingInfo.curTrack` 取歌曲信息，都没有再请求网易云接口；`publish` 发布状态，是否在播放取 `NetEaseLastPlaying.isPlaying`（新歌刚由 `.info` 触发、LevelDB 尚未落盘时先视为播放并启动 4 秒超时检测）。
    不再处于播放状态且开始时间早于“现在 − (时长 + 5 秒)”的，视为上次运行留下的，不显示；若之后用户在网易云继续播放该曲目，再按最新进度发布。
 3. **播放 / 暂停**：`playingChanged` 在收到 `playingInfo.playingState` 变化或 `lastPlaying` 超时（4 秒无新记录）时，把锚点切到播放或暂停并重置校准窗口。暂停期间拖动进度条只更新锚点位置、不触发恢复播放。
@@ -45,11 +45,11 @@
 - **拖动后的精度**：刚跟上时误差在 1 秒以内（只有整数秒），之后的记录继续收敛。
   改 `window` 之前，先用新的实测数据确认记录值和真实进度之间的差。
 - **识别不到的情况**：缓存和历史都没看到、LevelDB 也读不到的歌，识别不了。
-- **离线**：取不到歌曲信息时用占位曲目（`unknownNetEaseSong`），歌词仍按歌曲 ID 请求。
+- **离线**：取不到歌曲信息时用本地化占位曲目（`unknownNetEaseSong`），歌词仍按歌曲 ID 请求。
 
 ## 验证
 
-- `swift test --filter "NetEasePlayTests|NetEaseSongTests|NetEaseLastPlayingTests|ProgressCalibrationTests"`
+- `swift test --filter "NetEasePlayTests|NetEasePlayCacheTests|NetEaseSongTests|NetEaseLastPlayingTests|ProgressCalibrationTests"`
 - 运行日志：`/usr/bin/log show --last 10m --info --predicate 'subsystem == "dev.softlive.SoftLive"' --style compact`
   - info 级：换歌、暂停/继续播放、进度校正。
   - debug 级：每条进度记录，需要用 `log stream --level debug` 实时查看。

@@ -2,6 +2,8 @@ import Darwin
 import Foundation
 
 enum MemorySampler {
+    private static let hostPort: mach_port_t = mach_host_self()
+
     static func sample(
         includeDetails: Bool = false,
         topProcesses: [ProcessMetric] = []
@@ -12,7 +14,7 @@ enum MemorySampler {
         )
         let result = withUnsafeMutablePointer(to: &stats) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPointer in
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPointer, &count)
+                host_statistics64(hostPort, HOST_VM_INFO64, intPointer, &count)
             }
         }
         guard result == KERN_SUCCESS else { return (0, .normal, MemoryDetails()) }

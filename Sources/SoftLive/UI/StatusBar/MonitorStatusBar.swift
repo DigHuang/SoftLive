@@ -53,7 +53,8 @@ private final class MonitorPopoverPanel: NSPanel {
         statusBarButton = button
         lastOutsideDismissTime = nil
         lastShowTime = now
-        openingEventNumber = NSApp.currentEvent?.eventNumber
+        let eventNumber = NSApp.currentEvent?.eventNumber ?? 0
+        openingEventNumber = eventNumber != 0 ? eventNumber : nil
         let size = MonitorPopoverView.panelSize
         let margin = MonitorPopoverView.margin
         if let buttonWindow = button.window {
@@ -118,11 +119,11 @@ private final class MonitorPopoverPanel: NSPanel {
     }
 
     private func isOpeningClickEvent(_ event: NSEvent, now: ContinuousClock.Instant = .now) -> Bool {
-        if let openingEventNumber, event.eventNumber == openingEventNumber {
-            return true
-        }
         guard let lastShowTime, now - lastShowTime < Self.postShowIgnoreWindow else {
             return false
+        }
+        if let openingEventNumber, event.eventNumber == openingEventNumber {
+            return true
         }
         if let eventWindow = event.window,
            eventWindow === statusBarWindow || eventWindow === statusBarButton?.window {
@@ -157,9 +158,12 @@ private final class MonitorPopoverPanel: NSPanel {
                 }
                 return event
             }
-            if event.type == .keyDown, event.keyCode == 53 {
-                self.dismiss()
-                return nil
+            if event.type == .keyDown {
+                if event.keyCode == 53 {
+                    self.dismiss()
+                    return nil
+                }
+                return event
             }
             if self.isOpeningClickEvent(event) {
                 return event
@@ -216,6 +220,11 @@ final class MonitorStatusBar: NSObject {
         style.lineBreakMode = .byClipping
         return style
     }()
+    private static let rightAttributes: [NSAttributedString.Key: Any] = [
+        .font: rateFont,
+        .foregroundColor: NSColor.labelColor,
+        .paragraphStyle: rightParagraphStyle,
+    ]
 
     private static let cpuCyan = adaptiveColor(
         light: (0.01, 0.52, 0.78),
@@ -278,14 +287,20 @@ final class MonitorStatusBar: NSObject {
             self.coloredBars = coloredBars
             upText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.uploadBytesPerSec) : ""
             downText = style == .rateAndBars ? SystemMetrics.formatCompactRate(metrics.downloadBytesPerSec) : ""
-            cpuBarSteps = Int((min(max(metrics.cpuUsage, 0), 1) * 17).rounded())
-            ramBarSteps = Int((min(max(metrics.memoryUsage, 0), 1) * 17).rounded())
-            tmpBarSteps = Int((SystemMetrics.thermalProgress(metrics.temperatureCelsius) * 17).rounded())
+            cpuBarSteps = Self.barStep(for: metrics.cpuUsage)
+            ramBarSteps = Self.barStep(for: metrics.memoryUsage)
+            tmpBarSteps = Self.barStep(for: SystemMetrics.thermalProgress(metrics.temperatureCelsius))
             cpuHigh = coloredBars && metrics.cpuUsage >= cpuThreshold
             ramWarning = coloredBars && metrics.memoryUsage >= ramThreshold
             let temp = metrics.temperatureCelsius ?? 0
             tmpBand = coloredBars ? (temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)) : 0
             pressure = coloredBars ? metrics.memoryPressure : .normal
+        }
+
+        private static func barStep(for fraction: Double) -> Int {
+            let clamped = min(max(fraction, 0), 1)
+            guard clamped > 0.01 else { return 0 }
+            return max(1, Int((clamped * 17).rounded()))
         }
     }
 
@@ -398,11 +413,15 @@ final class MonitorStatusBar: NSObject {
     }
 
     @objc private func statusItemClicked() {
-        let eventType = NSApp.currentEvent?.type
+        let currentEvent = NSApp.currentEvent
+        let eventType = currentEvent?.type
         if eventType == .rightMouseUp || eventType == .rightMouseDown {
             panel?.dismiss()
-            NSApp.activate()
-            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            if let currentEvent, let button = item.button {
+                NSMenu.popUpContextMenu(menu, with: currentEvent, for: button)
+            } else {
+                menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            }
             return
         }
         handleLeftClick()
@@ -421,17 +440,12 @@ final class MonitorStatusBar: NSObject {
         let size = NSSize(width: width, height: itemHeight)
         let image = NSImage(size: size, flipped: true) { _ in
             if key.style == .rateAndBars {
-                let rightAttributes: [NSAttributedString.Key: Any] = [
-                    .font: rateFont,
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: rightParagraphStyle,
-                ]
                 (key.upText as NSString).draw(
-                    in: NSRect(x: 0, y: 1.5, width: 33, height: 10),
+                    in: NSRect(x: 0, y: 1.5, width: 34, height: 10),
                     withAttributes: rightAttributes
                 )
                 (key.downText as NSString).draw(
-                    in: NSRect(x: 0, y: 11.0, width: 33, height: 10),
+                    in: NSRect(x: 0, y: 11.0, width: 34, height: 10),
                     withAttributes: rightAttributes
                 )
             }
