@@ -36,8 +36,8 @@
 
 ## 界面呈现与交互约定
 
-- **状态栏（[`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift)）**：提供 `60 × 22 pt`（`↑`/`↓` 固定左列防抖网速 + 三柱）与 `20 × 22 pt`（仅三柱）两种尺寸，并通过 `button.toolTip` 实时汇总 `CPU · RAM · Temp · Net`。默认关闭彩色显示（`Preferences.monitorColoredBars == false`）时使用自适应单色模板渲染（`isTemplate = true`）；仅当某项指标触发用户告警阈值或内存压力告警时关闭模板模式并以 [`SoftLiveTheme`](../../Sources/SoftLive/UI/Theme/SoftLiveTheme.swift) 的琥珀/绯红语义色单独高亮对应柱体。
-- **详情弹窗（[`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)）**：采用 `.nonactivatingPanel` + `FirstMouseHostingView` 承载单层外框 `.glassEffect(.regular)`（`16 pt` 圆角），内部通过 `0.5 pt` `SoftLiveTheme.hairline` 分割线与 `SoftLiveTheme.insetWell` 浅凹面划分层次，无嵌套实色白卡片；`60` 秒折线图按近期极值自适应 Y 轴跨度（百分比最小跨度 `0.15`，温度最小跨度 `10 °C`）并在 `x = w - 4` 内缩绘制终点圆点；`CPU / RAM / TMP` 标签页默认单色，仅在越过告警阈值时着色；`Top 10` 进程列表默认隐藏关闭圆钮，仅在行悬停时于固定宽度尾槽显示 `xmark.circle.fill` 并通过 `.onTapGesture` 首击触发二次确认。
+- **状态栏（[`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift)）**：提供 `52 × 22 pt`（左侧上下两行紧凑上传/下载网速 + 右侧三柱）与 `20 × 22 pt`（仅三柱）两种尺寸，并通过 `button.toolTip` 实时汇总 `CPU · RAM · Temp · Net`（含 `↑`/`↓` 速率）。默认关闭彩色显示（`Preferences.monitorColoredBars == false`）时使用自适应单色模板渲染（`isTemplate = true`）；仅当某项指标触发用户告警阈值或内存压力告警时关闭模板模式并以 [`SoftLiveTheme`](../../Sources/SoftLive/UI/Theme/SoftLiveTheme.swift) 的琥珀/绯红语义色单独高亮对应柱体。
+- **详情弹窗（[`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)）**：采用 `.nonactivatingPanel` + `FirstMouseHostingView` 承载单层外框 `.glassEffect(.regular)`（`16 pt` 圆角），内部通过 `0.5 pt` `SoftLiveTheme.hairline` 分割线与 `SoftLiveTheme.insetWell` 浅凹面划分层次，无嵌套实色白卡片；`60` 秒折线图按近期极值自适应 Y 轴跨度（百分比最小跨度 `0.15`，温度最小跨度 `10 °C`）并在 `x = w - 4` 内缩绘制终点圆点；`CPU / RAM / TMP` 标签页默认单色，仅在越过告警阈值时着色；`Top 10` 进程列表数值右对齐边缘，行悬停时在右侧原 `52 pt` 槽位原地切换为 `结束 / Quit` 胶囊并通过 `.onTapGesture` 首击触发绯红 `确认 / Confirm` 二次确认。
 
 ## 验证
 

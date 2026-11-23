@@ -18,7 +18,7 @@
 - [`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift) 支持两种图像样式：`网速 + 柱状图`（`52 × 22 pt`，左侧上下两行上传/下载紧凑数值 + 右侧 CPU / RAM / TMP 三根柱）与 `仅柱状图`（`20 × 22 pt`），并支持切换柱状图彩色或单色模板显示（`Preferences.monitorColoredBars`）；温度按 `0–100 °C` 映射，CPU、内存与温度告警阈值由 `Preferences` 控制。文字、底轨与语义颜色适配系统外观；字体和段落样式缓存，仅在 `DisplayKey`（样式、彩色开关、文本、柱高步进或颜色分段）变化时重绘。
 - 左键按下切换 `.nonactivatingPanel` 承载的 [`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)，展开期间状态栏按钮保持高亮；右键直接弹出主菜单。左键与右键交互均首击直达控件且不激活 SoftLive；再次点击状态栏按钮、点击卡片外或按 `Esc` 收起（消去事件监听先于按钮动作触发时的同次点击重开）。
 - 详情页为 CPU / RAM / TMP：CPU 显示趋势、核心与 GPU 负载、Top 10 进程；RAM 显示趋势、内存构成与压力、Swap、Top 10 进程；TMP 显示趋势、部位热力、整机功耗与风扇。底栏显示完整上下行速率。数据来源、周期、按需采样和失败表现统一见 [系统监控](monitor.md)。
-- 进程行先点 `✕` 再确认 `结束`，确认期间固定列表避免排序导致误点；由 `SystemMonitor.terminateProcess` 执行结束。
+- 进程行右侧数值与弹窗右缘对齐，行悬停时在原槽位原地切换为 `结束 / Quit` 胶囊，点击后再变为 `确认 / Confirm`，确认期间固定列表避免排序导致误点；由 `SystemMonitor.terminateProcess` 执行结束。
 - 详情面板的 Liquid Glass 包裹自然高度内容，固定内边距，按内容变化调整可点击高度。视图树常驻，仅观察收起时停止更新的 `detailMetrics`，避免反复重建玻璃与布局。
 
 ## 桌面面板
@@ -45,7 +45,7 @@
 
 [`ControlCenterWindow`](../../Sources/SoftLive/UI/ControlCenter/ControlCenterWindow.swift) 为可自由缩放的左右分栏配置窗口（默认 `780 × 680 pt`，最小尺寸限制 `740 × 640 pt`）：
 
-- **左侧栏（`168 pt`）**：上方为原生系统设置风格的单行「播放器」「监听」与「清理」三项一级导航（配 `24 × 24 pt` 圆角图标徽标与平铺选中态），底部为带完整彩色应用图标（`BrandAssets.appIcon`）的 `SoftLive` 入口，点击后在右侧展示通用语言设置、产品说明、交互指南与架构隐私承诺。
+- **左侧栏（`172 pt`）**：采用原生 `.sidebar` vibrancy 材质与单色 `14 pt` SF Symbols 展示「播放器」「监听」与「清理」三项一级导航（选中态使用 `SoftLiveTheme.selectionFill` + `SoftLiveTheme.accent`），底部为带 `20 × 20 pt` 彩色应用图标（`BrandAssets.appIcon`）的 `SoftLive` 入口，点击后在右侧直接展示无外框 `56 × 56 pt` `AppIcon` 的关于信息、通用语言设置及快捷键与手势速查。
 - **右侧内容区（自适应宽度）**：顶部首个分组卡片上沿与左侧首项导航在 `y = 50 pt` 严格水平对齐，各 Tab 切换时顶部标题（`y = 28 pt`）与卡片组间距（`18 pt`）保持零跳动；采用无冗余副文案的单列分组表单（每行固定 `42 pt` 高，分段器使用 `.fixedSize` 防止文字截断）：
   - **播放器**：配置首选播放器、桌面常驻组件开关、状态栏歌词开关与最大宽度（`180 / 260 / 340 pt`）、桌面悬浮歌词开关/穿透锁定/字号（`22 / 26 / 30 pt`）/副句模式（`翻译优先 / 仅翻译 / 单行`）、演示舞台开关/律动风格（`流光 / 描金`）/星火特效。
   - **监听**：配置状态栏监控总开关、状态栏样式（`网速 + 柱状图` / `仅柱状图`）、柱状图彩色显示开关、弹窗默认页面（`CPU / RAM / TMP`）、采样间隔（`1 秒 / 2 秒 / 5 秒`）以及 CPU / 内存 / 温度三项告警阈值。

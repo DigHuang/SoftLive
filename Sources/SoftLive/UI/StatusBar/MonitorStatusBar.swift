@@ -210,20 +210,13 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
 }
 
 final class MonitorStatusBar: NSObject {
-    static let fullWidth: CGFloat = 60
+    static let fullWidth: CGFloat = 52
     static let barsOnlyWidth: CGFloat = 20
     private static let itemHeight: CGFloat = 22
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 8.0, weight: .semibold)
-    private static let arrowFont = NSFont.systemFont(ofSize: 7.5, weight: .semibold)
     private static let rightParagraphStyle: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.alignment = .right
-        style.lineBreakMode = .byClipping
-        return style
-    }()
-    private static let leftParagraphStyle: NSParagraphStyle = {
-        let style = NSMutableParagraphStyle()
-        style.alignment = .left
         style.lineBreakMode = .byClipping
         return style
     }()
@@ -231,11 +224,6 @@ final class MonitorStatusBar: NSObject {
         .font: rateFont,
         .foregroundColor: NSColor.labelColor,
         .paragraphStyle: rightParagraphStyle,
-    ]
-    private static let arrowAttributes: [NSAttributedString.Key: Any] = [
-        .font: arrowFont,
-        .foregroundColor: NSColor.labelColor.withAlphaComponent(0.58),
-        .paragraphStyle: leftParagraphStyle,
     ]
 
     private static let frostAccent = adaptiveColor(
@@ -502,26 +490,18 @@ final class MonitorStatusBar: NSObject {
         let size = NSSize(width: width, height: itemHeight)
         let image = NSImage(size: size, flipped: true) { _ in
             if key.style == .rateAndBars {
-                ("↑" as NSString).draw(
-                    in: NSRect(x: 1.0, y: 1.5, width: 7.0, height: 9.0),
-                    withAttributes: arrowAttributes
-                )
-                ("↓" as NSString).draw(
-                    in: NSRect(x: 1.0, y: 11.5, width: 7.0, height: 9.0),
-                    withAttributes: arrowAttributes
-                )
                 (key.upText as NSString).draw(
-                    in: NSRect(x: 8.0, y: 1.0, width: 33.5, height: 10.0),
+                    in: NSRect(x: 0.0, y: 1.0, width: 34.0, height: 10.0),
                     withAttributes: rightAttributes
                 )
                 (key.downText as NSString).draw(
-                    in: NSRect(x: 8.0, y: 11.0, width: 33.5, height: 10.0),
+                    in: NSRect(x: 0.0, y: 11.0, width: 34.0, height: 10.0),
                     withAttributes: rightAttributes
                 )
             }
 
             drawVerticalBars(
-                originX: key.style == .rateAndBars ? 45.0 : 3.5,
+                originX: key.style == .rateAndBars ? 39.0 : 3.5,
                 originY: 2.5,
                 barWidth: 3.0,
                 barHeight: 17,

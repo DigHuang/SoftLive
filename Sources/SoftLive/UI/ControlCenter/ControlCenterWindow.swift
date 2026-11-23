@@ -303,14 +303,11 @@ struct ControlCenterView: View {
         let isHovered = hoveredSection == .about
 
         return HStack(spacing: 8) {
-            Image(nsImage: BrandAssets.syncTemplate)
+            Image(nsImage: BrandAssets.appIcon)
                 .resizable()
-                .renderingMode(.template)
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 16, height: 16)
-                .foregroundStyle(isSelected ? SoftLiveTheme.accent : .secondary)
-                .frame(width: 20, alignment: .center)
+                .frame(width: 20, height: 20)
 
             Text("SoftLive")
                 .font(.system(size: 13, weight: isSelected ? .medium : .regular))
@@ -546,20 +543,11 @@ struct ControlCenterView: View {
         VStack(alignment: .leading, spacing: 18) {
             formGroup(title: L10n.tr("关于应用", "About")) {
                 HStack(spacing: 16) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(SoftLiveTheme.insetWell)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(SoftLiveTheme.hairline, lineWidth: 0.5)
-                            }
-                        Image(nsImage: BrandAssets.appIcon)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 56, height: 56)
-                    }
-                    .frame(width: 68, height: 68)
+                    Image(nsImage: BrandAssets.appIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 56, height: 56)
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {

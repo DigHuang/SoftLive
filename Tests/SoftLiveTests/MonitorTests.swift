@@ -69,6 +69,7 @@ import Testing
 
         let monoImage = MonitorStatusBar.renderImage(for: metrics, coloredBars: false)
         #expect(monoImage.isTemplate)
+        #expect(MonitorStatusBar.fullWidth == 52)
         #expect(monoImage.size == NSSize(width: MonitorStatusBar.fullWidth, height: 22))
         #expect(monoImage.tiffRepresentation != nil)
 

@@ -570,7 +570,7 @@ struct MonitorPopoverView: View {
         let headerHintText: String? = if let error = terminateErrorMessage {
             error
         } else if confirmingPID != nil {
-            L10n.tr("再次点击确认结束", "Click Quit to confirm")
+            L10n.tr("再次点击确认结束", "Click again to quit")
         } else {
             nil
         }
@@ -735,7 +735,7 @@ struct MonitorPopoverView: View {
     }
 }
 
-// MARK: - Process Row (Fixed Trailing Slot + Hover Quit)
+// MARK: - Process Row (In-Place Trailing Hover Quit)
 
 private struct ProcessRowView: View {
     let index: Int
@@ -748,7 +748,7 @@ private struct ProcessRowView: View {
     let onConfirmQuit: () -> Void
 
     @State private var isRowHovered = false
-    @State private var isXmarkHovered = false
+    @State private var isActionHovered = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -782,55 +782,65 @@ private struct ProcessRowView: View {
             }
             .frame(width: 30, height: 4)
 
-            Text(process.valueText)
-                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.primary)
-                .frame(width: 52, alignment: .trailing)
-
-            // Fixed-width trailing action slot keeps `valueText` horizontally stationary across rest/hover/confirm.
+            // Flush-right 52 pt slot swaps value text for the quit/confirm pill in-place on hover.
             Group {
                 if canKill && isConfirming {
-                    Text(L10n.tr("结束", "Quit"))
+                    Text(L10n.tr("确认", "Confirm"))
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 6.5)
                         .frame(height: 17)
                         .background(SoftLiveTheme.critical, in: Capsule())
                         .fixedSize(horizontal: true, vertical: false)
                         .contentShape(Rectangle())
                         .onTapGesture(perform: onConfirmQuit)
                 } else if canKill && isRowHovered {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(isXmarkHovered ? SoftLiveTheme.critical : .secondary)
-                        .frame(width: 20, height: 18, alignment: .trailing)
+                    Text(L10n.tr("结束", "Quit"))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 7.5)
+                        .frame(height: 17)
+                        .background(
+                            Color.primary.opacity(isActionHovered ? 0.14 : 0.09),
+                            in: Capsule()
+                        )
+                        .fixedSize(horizontal: true, vertical: false)
                         .contentShape(Rectangle())
                         .onHover { hovering in
-                            if isXmarkHovered != hovering {
-                                isXmarkHovered = hovering
+                            if isActionHovered != hovering {
+                                isActionHovered = hovering
                             }
                         }
                         .onTapGesture(perform: onArmConfirm)
                 } else {
-                    Color.clear
+                    Text(process.valueText)
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.primary)
                 }
             }
-            .frame(width: 34, height: 18, alignment: .trailing)
+            .frame(width: 52, height: 18, alignment: .trailing)
         }
         .frame(height: 20)
+        .background {
+            if isRowHovered || isConfirming {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(SoftLiveTheme.insetWell)
+                    .padding(.horizontal, -4)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
             if isRowHovered != hovering {
                 isRowHovered = hovering
             }
-            if !hovering && isXmarkHovered {
-                isXmarkHovered = false
+            if !hovering && isActionHovered {
+                isActionHovered = false
             }
         }
         .onChange(of: isPopoverActive) { _, active in
             if !active {
                 isRowHovered = false
-                isXmarkHovered = false
+                isActionHovered = false
             }
         }
     }
