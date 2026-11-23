@@ -352,21 +352,23 @@ struct ControlCenterView: View {
 
     // MARK: - Right Detail Pane
 
-    @ViewBuilder
     private var detailPane: some View {
-        switch state.selectedSection {
-        case .player:
-            scrollableSection { playerSettings }
-        case .monitor:
-            scrollableSection { monitorSettings }
-        case .cleaner:
-            CleanerPaneView(cleaner: cleaner, preferences: preferences)
-                .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 22)
-        case .about:
-            scrollableSection { aboutProductView }
+        Group {
+            switch state.selectedSection {
+            case .player:
+                scrollableSection { playerSettings }
+            case .monitor:
+                scrollableSection { monitorSettings }
+            case .cleaner:
+                CleanerPaneView(cleaner: cleaner, preferences: preferences)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 28)
+                    .padding(.bottom, 22)
+            case .about:
+                scrollableSection { aboutProductView }
+            }
         }
+        .tint(SoftLiveTheme.accent)
     }
 
     private func scrollableSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -378,7 +380,6 @@ struct ControlCenterView: View {
                 .padding(.bottom, 22)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tint(SoftLiveTheme.accent)
     }
 
     // MARK: - Tab 1: 播放器
