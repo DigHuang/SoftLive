@@ -34,6 +34,11 @@
 - **温度不可用时的回退**：在不支持 `PMU tdie` / `MTR Temp Sensor` 的环境（如虚拟机）中，`ThermalSampler.sample()` 返回 `nil`，状态栏 TMP 柱保持为空轨，弹窗显示 `-- °C`。
 - **计数器回绕保护**：32 位 `ifi_ibytes` / `ifi_obytes` 在高吞吐下可能回绕，当 `currentSnapshot < previous` 时跳过本次差值并更新基线，不产生巨额假速率。
 
+## 界面呈现与交互约定
+
+- **状态栏（[`MonitorStatusBar`](../../Sources/SoftLive/UI/StatusBar/MonitorStatusBar.swift)）**：提供 `60 × 22 pt`（`↑`/`↓` 固定左列防抖网速 + 三柱）与 `20 × 22 pt`（仅三柱）两种尺寸，并通过 `button.toolTip` 实时汇总 `CPU · RAM · Temp · Net`。默认关闭彩色显示（`Preferences.monitorColoredBars == false`）时使用自适应单色模板渲染（`isTemplate = true`）；仅当某项指标触发用户告警阈值或内存压力告警时关闭模板模式并以 [`SoftLiveTheme`](../../Sources/SoftLive/UI/Theme/SoftLiveTheme.swift) 的琥珀/绯红语义色单独高亮对应柱体。
+- **详情弹窗（[`MonitorPopoverView`](../../Sources/SoftLive/UI/StatusBar/MonitorPopover.swift)）**：采用 `.nonactivatingPanel` + `FirstMouseHostingView` 承载单层外框 `.glassEffect(.regular)`（`16 pt` 圆角），内部通过 `0.5 pt` `SoftLiveTheme.hairline` 分割线与 `SoftLiveTheme.insetWell` 浅凹面划分层次，无嵌套实色白卡片；`60` 秒折线图按近期极值自适应 Y 轴跨度（百分比最小跨度 `0.15`，温度最小跨度 `10 °C`）并在 `x = w - 4` 内缩绘制终点圆点；`CPU / RAM / TMP` 标签页默认单色，仅在越过告警阈值时着色；`Top 10` 进程列表默认隐藏关闭圆钮，仅在行悬停时于固定宽度尾槽显示 `xmark.circle.fill` 并通过 `.onTapGesture` 首击触发二次确认。
+
 ## 验证
 
 - `swift test --filter "SystemMetricsTests|SystemSamplersTests"`

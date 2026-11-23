@@ -210,13 +210,20 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
 }
 
 final class MonitorStatusBar: NSObject {
-    private static let fullWidth: CGFloat = 52
-    private static let barsOnlyWidth: CGFloat = 20
+    static let fullWidth: CGFloat = 60
+    static let barsOnlyWidth: CGFloat = 20
     private static let itemHeight: CGFloat = 22
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 8.0, weight: .semibold)
+    private static let arrowFont = NSFont.systemFont(ofSize: 7.5, weight: .semibold)
     private static let rightParagraphStyle: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.alignment = .right
+        style.lineBreakMode = .byClipping
+        return style
+    }()
+    private static let leftParagraphStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .left
         style.lineBreakMode = .byClipping
         return style
     }()
@@ -225,30 +232,23 @@ final class MonitorStatusBar: NSObject {
         .foregroundColor: NSColor.labelColor,
         .paragraphStyle: rightParagraphStyle,
     ]
+    private static let arrowAttributes: [NSAttributedString.Key: Any] = [
+        .font: arrowFont,
+        .foregroundColor: NSColor.labelColor.withAlphaComponent(0.58),
+        .paragraphStyle: leftParagraphStyle,
+    ]
 
-    private static let cpuCyan = adaptiveColor(
-        light: (0.01, 0.52, 0.78),
-        dark: (0.22, 0.74, 0.97)
+    private static let frostAccent = adaptiveColor(
+        light: (0.05, 0.47, 0.58),
+        dark: (0.36, 0.80, 0.92)
     )
-    private static let cpuOrange = adaptiveColor(
-        light: (0.90, 0.35, 0.05),
-        dark: (0.98, 0.45, 0.09)
+    private static let frostWarning = adaptiveColor(
+        light: (0.70, 0.40, 0.02),
+        dark: (0.96, 0.72, 0.24)
     )
-    private static let ramEmerald = adaptiveColor(
-        light: (0.02, 0.59, 0.41),
-        dark: (0.20, 0.83, 0.60)
-    )
-    private static let ramAmber = adaptiveColor(
-        light: (0.85, 0.47, 0.02),
-        dark: (0.98, 0.75, 0.14)
-    )
-    private static let ramCoral = adaptiveColor(
-        light: (0.86, 0.15, 0.15),
-        dark: (0.97, 0.36, 0.36)
-    )
-    private static let tmpTeal = adaptiveColor(
-        light: (0.05, 0.58, 0.53),
-        dark: (0.18, 0.83, 0.75)
+    private static let frostCritical = adaptiveColor(
+        light: (0.82, 0.19, 0.22),
+        dark: (0.97, 0.43, 0.44)
     )
 
     private static func adaptiveColor(
@@ -262,6 +262,13 @@ final class MonitorStatusBar: NSObject {
         }
     }
 
+    enum BarTone: Equatable {
+        case monochrome
+        case accent
+        case warning
+        case critical
+    }
+
     struct DisplayKey: Equatable {
         let style: MonitorStatusBarStyle
         let coloredBars: Bool
@@ -270,15 +277,18 @@ final class MonitorStatusBar: NSObject {
         let cpuBarSteps: Int
         let ramBarSteps: Int
         let tmpBarSteps: Int
-        let cpuHigh: Bool
-        let ramWarning: Bool
-        let tmpBand: Int
-        let pressure: MemoryPressureLevel
+        let cpuTone: BarTone
+        let ramTone: BarTone
+        let tmpTone: BarTone
+
+        var isTemplate: Bool {
+            cpuTone == .monochrome && ramTone == .monochrome && tmpTone == .monochrome
+        }
 
         init(
             metrics: SystemMetrics,
             style: MonitorStatusBarStyle = .rateAndBars,
-            coloredBars: Bool = true,
+            coloredBars: Bool = false,
             cpuThreshold: Double = MonitorCPUAlertThreshold.standard.fraction,
             ramThreshold: Double = MonitorRAMAlertThreshold.standard.fraction,
             thermalThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
@@ -290,11 +300,36 @@ final class MonitorStatusBar: NSObject {
             cpuBarSteps = Self.barStep(for: metrics.cpuUsage)
             ramBarSteps = Self.barStep(for: metrics.memoryUsage)
             tmpBarSteps = Self.barStep(for: SystemMetrics.thermalProgress(metrics.temperatureCelsius))
-            cpuHigh = coloredBars && metrics.cpuUsage >= cpuThreshold
-            ramWarning = coloredBars && metrics.memoryUsage >= ramThreshold
+
+            if metrics.cpuUsage >= cpuThreshold {
+                cpuTone = .critical
+            } else if coloredBars {
+                cpuTone = metrics.cpuUsage >= max(0.55, cpuThreshold - 0.15) ? .warning : .accent
+            } else {
+                cpuTone = .monochrome
+            }
+
+            switch metrics.memoryPressure {
+            case .critical:
+                ramTone = .critical
+            case .warning:
+                ramTone = .warning
+            case .normal:
+                if metrics.memoryUsage >= ramThreshold {
+                    ramTone = .warning
+                } else {
+                    ramTone = coloredBars ? .accent : .monochrome
+                }
+            }
+
             let temp = metrics.temperatureCelsius ?? 0
-            tmpBand = coloredBars ? (temp >= thermalThreshold ? 2 : (temp >= 55 ? 1 : 0)) : 0
-            pressure = coloredBars ? metrics.memoryPressure : .normal
+            if temp >= thermalThreshold {
+                tmpTone = .critical
+            } else if coloredBars {
+                tmpTone = temp >= max(55, thermalThreshold - 10) ? .warning : .accent
+            } else {
+                tmpTone = .monochrome
+            }
         }
 
         private static func barStep(for fraction: Double) -> Int {
@@ -332,6 +367,7 @@ final class MonitorStatusBar: NSObject {
         lastDisplayKey = initialKey
         item.isVisible = preferences.showsSystemMonitor
         item.button?.image = Self.renderImage(for: monitor.metrics, key: initialKey)
+        item.button?.toolTip = Self.tooltipText(for: monitor.metrics)
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
         item.button?.sendAction(on: [.leftMouseDown, .rightMouseUp])
@@ -352,7 +388,7 @@ final class MonitorStatusBar: NSObject {
         self.panel = popoverPanel
 
         observeTask = Task { [weak self] in
-            for await (metrics, visible, style, coloredBars, cpuAlert, ramAlert, thermalAlert) in Observations({
+            for await (metrics, visible, style, coloredBars, cpuAlert, ramAlert, thermalAlert, _) in Observations({
                 (
                     monitor.metrics,
                     preferences.showsSystemMonitor,
@@ -360,7 +396,8 @@ final class MonitorStatusBar: NSObject {
                     preferences.monitorColoredBars,
                     preferences.monitorCPUAlertThreshold.fraction,
                     preferences.monitorRAMAlertThreshold.fraction,
-                    preferences.monitorThermalAlertThreshold.celsius
+                    preferences.monitorThermalAlertThreshold.celsius,
+                    L10n.resolved
                 )
             }) {
                 guard let self else { return }
@@ -370,6 +407,10 @@ final class MonitorStatusBar: NSObject {
                 guard visible else {
                     self.panel?.dismiss()
                     continue
+                }
+                let nextTooltip = Self.tooltipText(for: metrics)
+                if self.item.button?.toolTip != nextTooltip {
+                    self.item.button?.toolTip = nextTooltip
                 }
                 let key = DisplayKey(
                     metrics: metrics,
@@ -427,12 +468,33 @@ final class MonitorStatusBar: NSObject {
         handleLeftClick()
     }
 
+    static func tooltipText(for metrics: SystemMetrics) -> String {
+        let cpu = "CPU \(SystemMetrics.formatPercentage(metrics.cpuUsage))"
+        let ram = "RAM \(SystemMetrics.formatPercentage(metrics.memoryUsage))"
+        let temp = "\(L10n.tr("温度", "Temp")) \(SystemMetrics.formatTemperatureDetail(metrics.temperatureCelsius))"
+        let net = "↑ \(SystemMetrics.formatRate(metrics.uploadBytesPerSec)) ↓ \(SystemMetrics.formatRate(metrics.downloadBytesPerSec))"
+        return "\(cpu) · \(ram) · \(temp) · \(net)"
+    }
+
     static func renderImage(
         for metrics: SystemMetrics,
         style: MonitorStatusBarStyle = .rateAndBars,
-        coloredBars: Bool = true
+        coloredBars: Bool = false,
+        cpuThreshold: Double = MonitorCPUAlertThreshold.standard.fraction,
+        ramThreshold: Double = MonitorRAMAlertThreshold.standard.fraction,
+        thermalThreshold: Double = MonitorThermalAlertThreshold.standard.celsius
     ) -> NSImage {
-        renderImage(for: metrics, key: DisplayKey(metrics: metrics, style: style, coloredBars: coloredBars))
+        renderImage(
+            for: metrics,
+            key: DisplayKey(
+                metrics: metrics,
+                style: style,
+                coloredBars: coloredBars,
+                cpuThreshold: cpuThreshold,
+                ramThreshold: ramThreshold,
+                thermalThreshold: thermalThreshold
+            )
+        )
     }
 
     private static func renderImage(for metrics: SystemMetrics, key: DisplayKey) -> NSImage {
@@ -440,53 +502,49 @@ final class MonitorStatusBar: NSObject {
         let size = NSSize(width: width, height: itemHeight)
         let image = NSImage(size: size, flipped: true) { _ in
             if key.style == .rateAndBars {
+                ("↑" as NSString).draw(
+                    in: NSRect(x: 1.0, y: 1.5, width: 7.0, height: 9.0),
+                    withAttributes: arrowAttributes
+                )
+                ("↓" as NSString).draw(
+                    in: NSRect(x: 1.0, y: 11.5, width: 7.0, height: 9.0),
+                    withAttributes: arrowAttributes
+                )
                 (key.upText as NSString).draw(
-                    in: NSRect(x: 0, y: 1.5, width: 34, height: 10),
+                    in: NSRect(x: 8.0, y: 1.0, width: 33.5, height: 10.0),
                     withAttributes: rightAttributes
                 )
                 (key.downText as NSString).draw(
-                    in: NSRect(x: 0, y: 11.0, width: 34, height: 10),
+                    in: NSRect(x: 8.0, y: 11.0, width: 33.5, height: 10.0),
                     withAttributes: rightAttributes
                 )
             }
 
-            let monoColor = NSColor.labelColor.withAlphaComponent(0.88)
-            let cpuColor = key.coloredBars ? (key.cpuHigh ? cpuOrange : cpuCyan) : monoColor
-            let ramColor: NSColor = if key.coloredBars {
-                switch metrics.memoryPressure {
-                case .critical: ramCoral
-                case .warning: ramAmber
-                case .normal: key.ramWarning ? ramAmber : ramEmerald
-                }
-            } else {
-                monoColor
-            }
-            let tmpColor: NSColor = if key.coloredBars {
-                switch key.tmpBand {
-                case 2: ramCoral
-                case 1: ramAmber
-                default: tmpTeal
-                }
-            } else {
-                monoColor
-            }
-
             drawVerticalBars(
-                originX: key.style == .rateAndBars ? 39.0 : 3.5,
+                originX: key.style == .rateAndBars ? 45.0 : 3.5,
                 originY: 2.5,
                 barWidth: 3.0,
                 barHeight: 17,
                 spacing: 2.0,
                 bars: [
-                    (metrics.cpuUsage, cpuColor),
-                    (metrics.memoryUsage, ramColor),
-                    (SystemMetrics.thermalProgress(metrics.temperatureCelsius), tmpColor),
+                    (metrics.cpuUsage, barColor(for: key.cpuTone)),
+                    (metrics.memoryUsage, barColor(for: key.ramTone)),
+                    (SystemMetrics.thermalProgress(metrics.temperatureCelsius), barColor(for: key.tmpTone)),
                 ]
             )
             return true
         }
-        image.isTemplate = !key.coloredBars
+        image.isTemplate = key.isTemplate
         return image
+    }
+
+    private static func barColor(for tone: BarTone) -> NSColor {
+        switch tone {
+        case .monochrome: NSColor.labelColor.withAlphaComponent(0.88)
+        case .accent: frostAccent
+        case .warning: frostWarning
+        case .critical: frostCritical
+        }
     }
 
     private static func drawVerticalBars(

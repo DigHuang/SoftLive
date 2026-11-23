@@ -46,6 +46,7 @@ final class LyricsStatusBar {
         else { return }
         lastMaxWidth = maxWidth
         button.title = text
+        button.toolTip = text.isEmpty ? "SoftLive" : text
         // The Sync icon only stands in while there is no text, to save menu-bar space.
         button.imagePosition = text.isEmpty ? .imageOnly : .noImage
         item.length = text.isEmpty
