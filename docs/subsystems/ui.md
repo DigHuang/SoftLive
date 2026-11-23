@@ -27,18 +27,18 @@
 
 ### 桌面歌词
 
-[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift) 位于 `.floating` 层级，在全屏 App 上也显示。双行居中：上行逐字歌词，下行为翻译或下一句（由 `Preferences.desktopLyricsSublineMode` 控制「翻译优先 / 仅翻译 / 单行主句」，字号由 `Preferences.desktopLyricsSize` 提供 `22 / 26 / 30 pt` 三档）；双行模式下空行仍保留高度，隐藏或无播放时卸载内部视图树。平时无背景，标准 SF Pro 字体配位图内双层阴影；控制栏标题截断而偏移胶囊保持固定宽度。
+[`DesktopLyrics`](../../Sources/SoftLive/UI/Overlay/DesktopLyrics.swift) 位于 `.floating` 层级，在全屏 App 上也显示。双行居中：上行逐字歌词，下行为翻译或下一句（由 `Preferences.desktopLyricsSublineMode` 控制「翻译优先 / 仅翻译 / 单行主句」，字号由 `Preferences.desktopLyricsSize` 提供 `22 / 26 / 30 pt` 三档）；双行模式下空行仍保留高度，隐藏或无播放时卸载内部视图树。平时无背景，标准 SF Pro 字体配位图内双层阴影；控制栏标题截断而偏移步进胶囊保持固定宽度。
 
-默认锁定并开启鼠标穿透。通过修饰键与鼠标释放事件判断唤醒：按住 `⌘` 移入后通过激活态追踪唤醒单层霜光玻璃背景和顶部控制栏（左侧显示 Sync 标志与当前曲目，中部在有歌词时提供 `±0.5s` 偏移与重置胶囊，右侧提供 `28 × 28 pt` 播放/暂停、锁定、隐藏按钮）；鼠标仍在卡片内时，松开 `⌘` 后仍可点击、拖动或双击切下一首，移出后恢复穿透。面板不可见时事件监听立即短路并复位，锁定且未唤醒时窗口外按 `⌘` 不取消穿透（不截获背景窗口的 `⌘` 点击）。
+默认锁定并开启鼠标穿透。通过修饰键与鼠标释放事件判断唤醒：按住 `⌘` 移入后通过激活态追踪唤醒 `24 pt` 圆角单层霜光玻璃背景和 `26 pt` 统一高度的顶部控制栏（左侧显示 Sync 标志与当前曲目；中部在有歌词时将 `-0.5s` / 当前偏移 / `+0.5s` 收敛为单个步进胶囊，活跃偏移高亮使用 [`SoftLiveTheme.accent`](../../Sources/SoftLive/UI/Theme/SoftLiveTheme.swift)；右侧提供 `26 × 26 pt` 播放/暂停、穿透切换（`cursorarrow.motionlines` / `cursorarrow`）与隐藏（`eye.slash`）按钮，`11 pt .medium` 图标且 `play.fill` 带 `+1 pt` 视觉居中微调）；鼠标仍在卡片内时，松开 `⌘` 后仍可点击、拖动或双击切下一首，移出后恢复穿透。面板不可见时事件监听立即短路并复位，锁定且未唤醒时窗口外按 `⌘` 不取消穿透（不截获背景窗口的 `⌘` 点击）。
 
 ### 桌面组件
 
 [`DesktopWidget`](../../Sources/SoftLive/UI/Overlay/DesktopWidget.swift) 位于桌面图标之上、App 窗口之下，支持拖动、保存位置和双击切下一首。
 
-- 背景复用 [`StagePalette.cached(for:)`](../../Sources/SoftLive/UI/Stage/StagePalette.swift) 按图片对象引用缓存的封面色盘，在 `.glassEffect(.regular)` 下方叠加静态封面双色环境柔光与高光描边；控件底色随系统浅色/深色外观自适应，统一使用 `28 × 28 pt` 首击直达热区（`.onTapGesture`）。
-- 未播放时是紧凑卡片，显示所选播放器最近曲目与封面、播放器选择和播放按钮，不保留空歌词区或进度条。
-- 无封面时显示 28 × 28 pt 的单色 Sync 标志，使用次级文字色；播放器选择按钮保留各播放器自己的图标。
-- 播放时展开曲目、封面、随封面强调色着色的进度条、细分割线与双行歌词，以及播放/暂停、关闭按钮。关闭通过 `PlaybackModel.closePlayback()` 退出目标播放器并收起卡片。
+- 背景复用 [`StagePalette.cached(for:)`](../../Sources/SoftLive/UI/Stage/StagePalette.swift) 按图片对象引用缓存的封面色盘，在 `24 pt` 圆角 `.glassEffect(.regular)` 下方叠加静态封面双色环境柔光与高光描边；控件底色随系统浅色/深色外观自适应，统一使用首击直达热区（`.onTapGesture`）。
+- 未播放时是 `92 pt` 高紧凑卡片，右侧采用水平布局：左侧为统一圆角矩形裁剪的 `24 × 24 pt` 播放器切换器（未选中项降低饱和度与不透明度，避免鲜艳图标喧宾夺主），右侧为带 Frost / 封面强调色的 `32 × 32 pt` 圆形播放按钮（`play.fill` 带 `+1 pt` 视觉居中微调），不保留空歌词区或进度条。
+- 无封面时显示 `28 × 28 pt` 的单色 Sync 标志，使用次级文字色，进度与强调点回退到 [`SoftLiveTheme.accent`](../../Sources/SoftLive/UI/Theme/SoftLiveTheme.swift)。
+- 播放时展开曲目、封面、随封面强调色着色的 `100 pt` 进度条、细分割线与双行歌词，以及 `28 × 28 pt`（`11 pt .medium`）播放/暂停与停止（`stop.fill`）按钮。停止按钮通过 `PlaybackModel.closePlayback()` 退出目标播放器并收起卡片。
 - 进度条每秒刷新，时间用 `11 pt` 等宽整数格式化；组件关闭时不启动 `TimelineView` 调度。
 
 ### 桌面配置中心

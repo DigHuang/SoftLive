@@ -50,8 +50,9 @@ struct DesktopWidgetView: View {
             let selected = preferences.preferredPlayer
             let recent = model.recentTracks[selected]
             let activeImage = playback != nil ? model.artwork : model.recentArtworks[selected]
+            let hasArtwork = activeImage != nil
             let palette = StagePalette.cached(for: activeImage)
-            let accent = Color(nsColor: palette.accent)
+            let accent = hasArtwork ? Color(nsColor: palette.accent) : SoftLiveTheme.accent
 
             VStack(alignment: .leading, spacing: 0) {
                 header(
@@ -59,6 +60,7 @@ struct DesktopWidgetView: View {
                     selected: selected,
                     recent: recent,
                     artwork: activeImage,
+                    hasArtwork: hasArtwork,
                     accent: accent
                 )
                 .frame(height: isExpanded ? 56 : 60)
@@ -141,9 +143,12 @@ struct DesktopWidgetView: View {
         selected: PlayerKind,
         recent: Track?,
         artwork: NSImage?,
+        hasArtwork: Bool,
         accent: Color
     ) -> some View {
-        HStack(spacing: 12) {
+        let tintColor = hasArtwork ? accent : SoftLiveTheme.accent
+
+        return HStack(spacing: 12) {
             Artwork(image: artwork)
                 .frame(width: 54, height: 54)
                 .clipShape(.rect(cornerRadius: 12))
@@ -180,19 +185,31 @@ struct DesktopWidgetView: View {
                     circleButton(
                         icon: model.isPlaying ? "pause.fill" : "play.fill",
                         isProminent: true,
+                        accentTint: tintColor,
+                        opticalOffsetX: model.isPlaying ? 0 : 1,
                         help: model.isPlaying ? L10n.tr("暂停", "Pause") : L10n.tr("继续播放", "Play"),
                         action: model.togglePlayPause
                     )
                     circleButton(
-                        icon: "xmark",
-                        help: L10n.tr("关闭", "Close"),
+                        icon: "stop.fill",
+                        help: L10n.tr("停止并退出播放器", "Stop & Quit Player"),
                         action: model.closePlayback
                     )
                 }
             } else {
-                VStack(alignment: .trailing, spacing: 4) {
-                    playPillButton(selected: selected)
-                    playerIconBar(selected: selected)
+                HStack(spacing: 10) {
+                    sourceSelector(selected: selected)
+                    circleButton(
+                        icon: "play.fill",
+                        diameter: 32,
+                        iconSize: 13,
+                        isProminent: true,
+                        accentTint: tintColor,
+                        opticalOffsetX: 1,
+                        help: L10n.tr("启动 \(selected.displayName) 并播放", "Launch \(selected.displayName) and play")
+                    ) {
+                        model.play(selected)
+                    }
                 }
             }
         }
@@ -226,68 +243,65 @@ struct DesktopWidgetView: View {
 
     private func circleButton(
         icon: String,
+        diameter: CGFloat = 28,
+        iconSize: CGFloat = 11,
         isProminent: Bool = false,
-        isSubtle: Bool = false,
+        accentTint: Color? = nil,
+        opticalOffsetX: CGFloat = 0,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: isSubtle ? 9.5 : 10.5, weight: .bold))
-            .foregroundStyle(isSubtle ? .secondary : .primary)
-            .frame(width: 28, height: 28)
-            .background(
-                isProminent ? prominentControlFill : (isSubtle ? .clear : controlFill),
-                in: .circle
-            )
+        let isDark = colorScheme == .dark
+        let tintFillAlpha = diameter > 28 ? (isDark ? 0.20 : 0.16) : (isDark ? 0.16 : 0.12)
+        let tintBorderAlpha = diameter > 28 ? (isDark ? 0.36 : 0.30) : (isDark ? 0.30 : 0.24)
+        return Image(systemName: icon)
+            .font(.system(size: iconSize, weight: .medium))
+            .foregroundStyle(.primary)
+            .offset(x: opticalOffsetX)
+            .frame(width: diameter, height: diameter)
+            .background {
+                Circle()
+                    .fill(isProminent ? prominentControlFill : controlFill)
+                    .overlay {
+                        if let accentTint {
+                            Circle().fill(accentTint.opacity(tintFillAlpha))
+                        }
+                    }
+            }
             .overlay {
-                if !isSubtle {
-                    Circle().strokeBorder(controlBorder, lineWidth: 0.5)
-                }
+                Circle().strokeBorder(
+                    accentTint.map { $0.opacity(tintBorderAlpha) } ?? controlBorder,
+                    lineWidth: 0.5
+                )
             }
             .contentShape(.circle)
             .help(help)
             .onTapGesture(perform: action)
     }
 
-    private func playPillButton(selected: PlayerKind) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: "play.fill")
-                .font(.system(size: 10, weight: .bold))
-            Text(L10n.tr("播放", "Play"))
-                .font(.system(size: 12, weight: .semibold))
-        }
-        .foregroundStyle(.primary)
-        .fixedSize(horizontal: true, vertical: false)
-        .padding(.horizontal, 12)
-        .frame(height: 28)
-        .background(prominentControlFill, in: .capsule)
-        .overlay {
-            Capsule().strokeBorder(controlBorder, lineWidth: 0.5)
-        }
-        .contentShape(.capsule)
-        .help(L10n.tr("启动 \(selected.displayName) 并播放", "Launch \(selected.displayName) and play"))
-        .onTapGesture {
-            model.play(selected)
-        }
-    }
-
-    private func playerIconBar(selected: PlayerKind) -> some View {
-        HStack(spacing: 4) {
+    private func sourceSelector(selected: PlayerKind) -> some View {
+        let isDark = colorScheme == .dark
+        return HStack(spacing: 5) {
             ForEach(PlayerKind.allCases, id: \.self) { kind in
                 let isSelected = selected == kind
+                let shape = RoundedRectangle(cornerRadius: 6.5, style: .continuous)
                 PlayerIcon(kind: kind)
                     .frame(width: 20, height: 20)
-                    .frame(width: 28, height: 28)
-                    .opacity(isSelected ? 1.0 : 0.42)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .saturation(isSelected ? 0.78 : 0.12)
+                    .opacity(isSelected ? 1.0 : (isDark ? 0.45 : 0.48))
+                    .frame(width: 24, height: 24)
                     .background(
-                        isSelected ? controlFill : .clear,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        isSelected ? controlFill : controlFill.opacity(0.45),
+                        in: shape
                     )
                     .overlay {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(controlBorder, lineWidth: 0.5)
-                        }
+                        shape.strokeBorder(
+                            isSelected
+                                ? SoftLiveTheme.accent.opacity(isDark ? 0.55 : 0.42)
+                                : controlBorder.opacity(0.65),
+                            lineWidth: 0.5
+                        )
                     }
                     .contentShape(Rectangle())
                     .help(kind.displayName)
@@ -331,10 +345,12 @@ private struct PlayerIcon: View {
 
     var body: some View {
         if let icon = kind.icon {
-            Image(nsImage: icon).resizable().aspectRatio(contentMode: .fill)
+            Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
         } else {
             Rectangle().fill(.quaternary).overlay {
-                Image(systemName: "music.note").foregroundStyle(.secondary)
+                Image(systemName: "music.note")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -360,7 +376,7 @@ private struct Artwork: View {
 }
 
 private struct PlaybackProgress: View {
-    private static let barWidth: CGFloat = 78
+    private static let barWidth: CGFloat = 100
 
     let model: PlaybackModel
     let accent: Color

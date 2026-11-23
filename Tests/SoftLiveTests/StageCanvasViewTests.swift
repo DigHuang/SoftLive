@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import SwiftUI
 import Testing
 @testable import SoftLive
 
@@ -423,6 +424,52 @@ struct StageCanvasViewTests {
             )
             #expect(window.performKeyEquivalent(with: cmdW))
             #expect(!preferences.showsStageWindow)
+        }
+    }
+
+    @Test func stageWindowViewRendersHUDStatesAndTogglesPreferencesCleanly() throws {
+        try withIsolatedStageWindow { window, preferences, _ in
+            let model = PlaybackModel(sources: [])
+            let state = StageWindowState()
+            state.isHovered = true
+            state.isZoomed = true
+
+            for style in StageStyle.allCases {
+                for sparks in [true, false] {
+                    preferences.stageStyle = style
+                    preferences.stageSparks = sparks
+                    let host = NSHostingView(
+                        rootView: StageWindowView(
+                            model: model,
+                            preferences: preferences,
+                            windowState: state,
+                            onToggleZoom: {},
+                            onClose: {}
+                        )
+                    )
+                    host.appearance = window.appearance
+                    host.frame = NSRect(origin: .zero, size: StageWindow.minWindowSize)
+                    host.layoutSubtreeIfNeeded()
+                    let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    #expect(rep.pixelsWide >= Int(StageWindow.minWindowSize.width))
+                    #expect(rep.pixelsHigh >= Int(StageWindow.minWindowSize.height))
+                }
+            }
+
+            preferences.showsStageWindow = false
+            let hiddenHost = NSHostingView(
+                rootView: StageWindowView(
+                    model: model,
+                    preferences: preferences,
+                    windowState: state,
+                    onToggleZoom: {},
+                    onClose: {}
+                )
+            )
+            hiddenHost.frame = NSRect(origin: .zero, size: StageWindow.defaultSize)
+            hiddenHost.layoutSubtreeIfNeeded()
+            #expect(hiddenHost.fittingSize == .zero)
         }
     }
 
